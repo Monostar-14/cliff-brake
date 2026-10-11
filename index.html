@@ -9,7 +9,7 @@
 <body>
 <div class="app">
   <header class="topbar">
-    <div class="brand"><span class="dot"></span><b>悬崖急刹</b><span class="sub">停得越贴边，分越高</span></div>
+    <div class="brand"><span class="dot"></span><b>悬崖急刹</b><span class="sub">第三人称车后视角</span></div>
     <div class="track" id="track">
       <div class="track-fill" id="trackFill"></div>
       <div class="track-danger" id="trackDanger"></div>
@@ -20,7 +20,6 @@
       <div class="hud-item"><span>距崖边</span><b id="distText">--</b></div>
       <div class="hud-item"><span>最佳成绩</span><b id="bestText">--</b></div>
     </div>
-    <a class="icon-btn" href="index-3d.html" title="切到 3D 版" style="text-decoration:none;display:flex;align-items:center;justify-content:center">3D</a>
     <button class="icon-btn" id="soundBtn" title="音效开关">🔊</button>
   </header>
 
@@ -39,7 +38,7 @@
         <div class="gauge-ticks" id="gaugeTicks"></div>
       </div>
       <div class="pedal-num" id="pedalVal">0<small>N</small></div>
-      <div class="pedal-sub" id="pedalSub">上限 1612 N<br>还能撑 3.43 s</div>
+      <div class="pedal-sub" id="pedalSub">上限 1612 N<br>还能撑 2.86 s</div>
       <div class="crack"></div>
     </aside>
 
@@ -76,7 +75,7 @@
 
     <div class="meters glass" id="meters">
       <div>现在点刹还需 <b id="needText">--</b> ｜ 贴边极限 <b id="theoDist">--</b></div>
-      <div>累计踩下 <b id="heldText">0.00 s</b> ／ 力度表还能撑 <b id="leftText">3.43 s</b></div>
+      <div>累计踩下 <b id="heldText">0.00 s</b> ／ 力度表还能撑 <b id="leftText">2.86 s</b></div>
       <div id="predictText">— 别急着踩，也别踩太晚 —</div>
     </div>
   </footer>
@@ -85,6 +84,6 @@
 <div class="sr" id="selftest" aria-hidden="true"></div>
 
 <script src="game.js"></script>
-<script src="app.js"></script>
+<script src="view3d.js"></script>
 </body>
 </html>

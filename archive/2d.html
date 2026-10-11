@@ -3,13 +3,15 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>悬崖急刹 3D · 车右后方视角</title>
-<link rel="stylesheet" href="hud.css" />
+<title>悬崖急刹 · 2D 横版（归档，站内不展示）</title>
+<!-- 归档页：早期 2D 横版实现。站点入口是 ../index.html（3D），这里没有任何入口指向它，
+     只为保留一份可跑的旧版本（自检仍在 run-tests.py 里跑，防止烂掉）。 -->
+<link rel="stylesheet" href="../hud.css" />
 </head>
 <body>
 <div class="app">
   <header class="topbar">
-    <div class="brand"><span class="dot"></span><b>悬崖急刹</b><span class="sub">3D · 车右后方视角</span></div>
+    <div class="brand"><span class="dot"></span><b>悬崖急刹</b><span class="sub">2D 横版 · 归档</span></div>
     <div class="track" id="track">
       <div class="track-fill" id="trackFill"></div>
       <div class="track-danger" id="trackDanger"></div>
@@ -20,7 +22,6 @@
       <div class="hud-item"><span>距崖边</span><b id="distText">--</b></div>
       <div class="hud-item"><span>最佳成绩</span><b id="bestText">--</b></div>
     </div>
-    <a class="icon-btn" href="index.html" title="切到 2D 版" style="text-decoration:none;display:flex;align-items:center;justify-content:center">2D</a>
     <button class="icon-btn" id="soundBtn" title="音效开关">🔊</button>
   </header>
 
@@ -39,7 +40,7 @@
         <div class="gauge-ticks" id="gaugeTicks"></div>
       </div>
       <div class="pedal-num" id="pedalVal">0<small>N</small></div>
-      <div class="pedal-sub" id="pedalSub">上限 1612 N<br>还能撑 3.43 s</div>
+      <div class="pedal-sub" id="pedalSub">上限 1612 N<br>还能撑 2.86 s</div>
       <div class="crack"></div>
     </aside>
 
@@ -76,7 +77,7 @@
 
     <div class="meters glass" id="meters">
       <div>现在点刹还需 <b id="needText">--</b> ｜ 贴边极限 <b id="theoDist">--</b></div>
-      <div>累计踩下 <b id="heldText">0.00 s</b> ／ 力度表还能撑 <b id="leftText">3.43 s</b></div>
+      <div>累计踩下 <b id="heldText">0.00 s</b> ／ 力度表还能撑 <b id="leftText">2.86 s</b></div>
       <div id="predictText">— 别急着踩，也别踩太晚 —</div>
     </div>
   </footer>
@@ -84,7 +85,7 @@
 
 <div class="sr" id="selftest" aria-hidden="true"></div>
 
-<script src="game.js"></script>
-<script src="view3d.js"></script>
+<script src="../game.js"></script>
+<script src="app.js"></script>
 </body>
 </html>

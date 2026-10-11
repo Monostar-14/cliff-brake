@@ -3,9 +3,10 @@
 """悬崖急刹 —— 无头验证 runner
 
 用法:  python run-tests.py  [--shots]
-  1) 用 headless Edge 打开 verify.html  -> 纯物理内核断言
-  2) 打开 index.html?selftest=1        -> 页面/渲染/输入通路自检
-  --shots 额外生成 shot-*.png 截图
+  1) verify.html                 -> 纯物理内核断言(17 项)
+  2) index.html?selftest=1       -> 站点唯一入口(3D 第三人称)的渲染/输入/流程自检
+  3) archive/2d.html?selftest=1  -> 早期 2D 横版(归档，站内不展示)自检，防止它烂掉
+  --shots 额外生成截图
 """
 import json
 import os
@@ -68,13 +69,24 @@ def dump(url):
                  "--dump-dom", url])
 
 
+def get_selftest(url):
+    """抓页面里 #selftest 的 JSON（页面自检把结果写在这个 div 里）"""
+    dom = dump(url)
+    m = re.search(r'id="selftest"[^>]*>(.*?)</div>', dom, re.S)
+    raw = _html.unescape(m.group(1)).strip() if m else ""
+    if not raw:
+        return None, dom
+    try:
+        return json.loads(raw), dom
+    except Exception:
+        return "PARSE_FAIL:" + raw[:400], dom
+
+
 def main():
     rc = 0
     print("浏览器:", EDGE)
-    try:
-        print("URL   :", URL)
-    except Exception:
-        pass
+    print("URL   :", URL)
+
     print()
     print("=" * 66)
     print("1) 物理内核验证  verify.html")
@@ -99,77 +111,61 @@ def main():
 
     print()
     print("=" * 66)
-    print("2) 页面自检  index.html?selftest=1")
+    print("2) 站点入口自检  index.html?selftest=1   (3D 第三人称，唯一入口)")
     print("=" * 66)
-    dom2 = dump(URL + "index.html?selftest=1")
-    m2 = re.search(r'id="selftest"[^>]*>(.*?)</div>', dom2, re.S)
-    raw = _html.unescape(m2.group(1)).strip() if m2 else ""
-    if not raw:
-        print("!! 自检未输出（脚本可能在加载阶段就抛错了）")
-        return 1
-    try:
-        rep = json.loads(raw)
-    except Exception as e:
-        print("!! 自检输出无法解析:", e)
-        print(raw[:1500])
+    rep, dom2 = get_selftest(URL + "index.html?selftest=1")
+    if isinstance(rep, str) or rep is None:
+        print("!! 自检未输出或无法解析")
+        print(rep if isinstance(rep, str) else dom2[:1200])
         return 1
     c = rep.get("checks", {})
     print("ok =", rep.get("ok"), "  errors =", rep.get("err"))
-    print("  点刹成功     :", c.get("feather"))
-    print("  一脚不松     :", c.get("fullHold"))
-    print("  不刹车       :", c.get("noBrake"))
-    print("  输入通路     :", c.get("input"))
-    print("  画布像素     :", c.get("pixels"))
-    print("  DOM          :", c.get("dom"))
+    print("  点刹成功 :", c.get("feather"))
+    print("  一脚不松 :", c.get("fullHold"))
+    print("  不刹车   :", c.get("noBrake"))
+    print("  相机(相对车):", c.get("camera"), " 图元数:", (c.get("geometry") or {}).get("items"))
+    print("  像素     :", c.get("pixels"))
+    print("  输入通路 :", c.get("input"))
+    print("  结算/重开:", c.get("flow"))
     if not rep.get("ok"):
         rc = 1
 
     print()
     print("=" * 66)
-    print("3) 3D 版页面自检  index-3d.html?selftest=1")
+    print("3) 归档版自检  archive/2d.html?selftest=1   (早期 2D 横版，不对外)")
     print("=" * 66)
-    dom3 = dump(URL + "index-3d.html?selftest=1")
-    m3 = re.search(r'id="selftest"[^>]*>(.*?)</div>', dom3, re.S)
-    raw3 = _html.unescape(m3.group(1)).strip() if m3 else ""
-    if not raw3:
-        print("!! 3D 自检未输出（脚本可能在加载阶段就抛错了）")
+    rep2, dom3 = get_selftest(URL + "archive/2d.html?selftest=1")
+    if isinstance(rep2, str) or rep2 is None:
+        print("!! 归档版自检未输出或无法解析")
+        print(rep2 if isinstance(rep2, str) else dom3[:1200])
         rc = 1
     else:
-        try:
-            r3 = json.loads(raw3)
-        except Exception as e:
-            print("!! 3D 自检输出无法解析:", e)
-            print(raw3[:1200])
+        c2 = rep2.get("checks", {})
+        print("ok =", rep2.get("ok"), "  errors =", rep2.get("err"))
+        print("  点刹成功     :", c2.get("feather"))
+        print("  一脚不松     :", c2.get("fullHold"))
+        print("  不刹车       :", c2.get("noBrake"))
+        print("  输入通路     :", c2.get("input"))
+        print("  画布像素     :", c2.get("pixels"))
+        if not rep2.get("ok"):
             rc = 1
-        else:
-            c3 = r3.get("checks", {})
-            print("ok =", r3.get("ok"), "  errors =", r3.get("err"))
-            print("  点刹成功 :", c3.get("feather"))
-            print("  一脚不松 :", c3.get("fullHold"))
-            print("  不刹车   :", c3.get("noBrake"))
-            print("  相机(相对车):", c3.get("camera"), " 图元数:", (c3.get("geometry") or {}).get("items"))
-            print("  像素     :", c3.get("pixels"))
-            print("  输入通路 :", c3.get("input"))
-            print("  结算/重开:", c3.get("flow"))
-            if not r3.get("ok"):
-                rc = 1
 
     if "--shots" in sys.argv:
         print()
         print("=" * 66)
         print("4) 截图")
         print("=" * 66)
-        for mode in ("start", "accel", "braking", "breaking", "wreck", "air", "impact", "win", "fall"):
+        for mode in ("start", "accel", "braking", "near", "wreck", "air", "impact", "fall", "win"):
             out = os.path.join(HERE, "shot-%s.png" % mode)
             edge(["--window-size=1560,900", "--force-device-scale-factor=1",
                   "--screenshot=" + out.replace("/", "\\"),
                   URL + "index.html?shot=" + mode])
             print("  ", out, os.path.getsize(out), "bytes")
-        for mode in ("accel", "braking", "near", "win", "wreck", "air", "impact"):
-            out = os.path.join(HERE, "shot3d-%s.png" % mode)
+        for mode in ("start", "accel", "braking", "breaking", "wreck", "air", "impact", "fall", "win"):
+            out = os.path.join(HERE, "shot-2d-%s.png" % mode)
             edge(["--window-size=1560,900", "--force-device-scale-factor=1",
                   "--screenshot=" + out.replace("/", "\\"),
-                  URL + "index-3d.html?shot=" + mode])
+                  URL + "archive/2d.html?shot=" + mode])
             print("  ", out, os.path.getsize(out), "bytes")
 
     print()

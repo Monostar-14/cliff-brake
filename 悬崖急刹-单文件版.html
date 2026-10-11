@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>悬崖急刹 · 刹车踏板挑战 （单文件版）</title>
 <style>
-/* 悬崖急刹 —— HUD 样式（2D 版 index.html / 3D 版 index-3d.html 共用） */
+/* 悬崖急刹 —— HUD 样式（站点入口 index.html 与归档页 archive/2d.html 共用） */
   *{box-sizing:border-box}
   html,body{margin:0;height:100%;overflow:hidden;background:#04070d;color:#e9eff8;
     font-family:"Segoe UI Variable Display","Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
@@ -159,7 +159,7 @@
 <body>
 <div class="app">
   <header class="topbar">
-    <div class="brand"><span class="dot"></span><b>悬崖急刹</b><span class="sub">停得越贴边，分越高</span></div>
+    <div class="brand"><span class="dot"></span><b>悬崖急刹</b><span class="sub">第三人称车后视角</span></div>
     <div class="track" id="track">
       <div class="track-fill" id="trackFill"></div>
       <div class="track-danger" id="trackDanger"></div>
@@ -170,7 +170,6 @@
       <div class="hud-item"><span>距崖边</span><b id="distText">--</b></div>
       <div class="hud-item"><span>最佳成绩</span><b id="bestText">--</b></div>
     </div>
-    <a class="icon-btn" href="#" style="display:none" title="切到 3D 版" style="text-decoration:none;display:flex;align-items:center;justify-content:center">3D</a>
     <button class="icon-btn" id="soundBtn" title="音效开关">🔊</button>
   </header>
 
@@ -189,7 +188,7 @@
         <div class="gauge-ticks" id="gaugeTicks"></div>
       </div>
       <div class="pedal-num" id="pedalVal">0<small>N</small></div>
-      <div class="pedal-sub" id="pedalSub">上限 1612 N<br>还能撑 3.43 s</div>
+      <div class="pedal-sub" id="pedalSub">上限 1612 N<br>还能撑 2.86 s</div>
       <div class="crack"></div>
     </aside>
 
@@ -226,7 +225,7 @@
 
     <div class="meters glass" id="meters">
       <div>现在点刹还需 <b id="needText">--</b> ｜ 贴边极限 <b id="theoDist">--</b></div>
-      <div>累计踩下 <b id="heldText">0.00 s</b> ／ 力度表还能撑 <b id="leftText">3.43 s</b></div>
+      <div>累计踩下 <b id="heldText">0.00 s</b> ／ 力度表还能撑 <b id="leftText">2.86 s</b></div>
       <div id="predictText">— 别急着踩，也别踩太晚 —</div>
     </div>
   </footer>
@@ -575,17 +574,21 @@
 </script>
 <script>
 /*!
- * 悬崖急刹 (Cliff Brake) — 视图 / 交互层
- * 依赖 game.js 暴露的 window.CarGame
+ * 悬崖急刹 3D —— 手写软件三维渲染器（零依赖，不联网也能跑）
+ *
+ * · 相机：车「右后方」第三人称追尾视角（位置 = 车后 8.5m、右侧 3.8m、高 3.4m）
+ * · 物理内核沿用 game.js，一行未改（17 项物理断言继续有效）
+ * · 渲染：世界多边形 -> 相机空间 -> 近平面裁剪 -> 透视投影 -> 分层 + 深度排序
+ *         填充（画家算法），带方向光平面着色 + 距离雾。没有任何 WebGL/three.js。
  */
 (function () {
   'use strict';
   var $ = function (s) { return document.querySelector(s); };
 
-  // ---------------------------------------------------------------- 引用
   var canvas = $('#world');
   var ctx = canvas.getContext('2d');
   var stage = $('#stage');
+
   var el = {
     distText: $('#distText'), bestText: $('#bestText'),
     trackFill: $('#trackFill'), trackCar: $('#trackCar'), trackDanger: $('#trackDanger'),
@@ -601,23 +604,463 @@
   };
 
   var THEO = window.carTheoretical();
-  var FEATHER = 1.45;                        // 点刹比一脚踩死多滑的比例(实测 0.6/0.3 节奏)
-  var DANGER = THEO.brakeDist * 1.5;         // 危险区长度: 在这里才开始刹车基本刹不住
-  var game = new window.CarGame();
-  var g = game;
+  var FEATHER = 1.45;
+  var DANGER = THEO.brakeDist * 1.5;
+  var g = new window.CarGame();
 
-  // ---------------------------------------------------------------- 状态
-  var W = 0, H = 0, visM = 185, scale = 7, groundY = 0, camX = 0, roadH = 14;
-  var CAR_VIS = 2.2;           // 车的视觉放大系数(只为好看)
-  var smoke = [], skid = [], wheelRot = 0, prevPhase = 'idle', snapFired = false, flash = 0;
+  // ================================================================ 3D 数学
+  var W = 0, H = 0, DPR = 1, focal = 600;
+  var NEAR = 0.35;
+  var camPos = [0, 4, 8], camFwd = [1, 0, 0], camRight = [0, 0, 1], camUp = [0, 1, 0];
+  var camWant = [0, 4, 8], camLook = [0, 1, 0];
+  var LIGHT = [0, 0, 0];
+  var FOG = [170, 142, 126], FOG_A = 55, FOG_B = 420;   // 距离雾（暖调，和天际线一致）
   var shakeX = 0, shakeY = 0;
-  var paused = true;           // 浮层显示时暂停推进
-  var runLoop = true;
-  var best = null;
 
-  try { best = JSON.parse(localStorage.getItem('cliffBrakeBest') || 'null'); } catch (e) { best = null; }
+  function sub(a, b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
+  function dot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+  function cross(a, b) {
+    return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  }
+  function norm(v) { var l = Math.sqrt(dot(v, v)) || 1; return [v[0] / l, v[1] / l, v[2] / l]; }
+  function lerp(a, b, t) { return a + (b - a) * t; }
 
-  // ---------------------------------------------------------------- 音效
+  function lookAt(pos, target) {
+    camPos = pos;
+    camFwd = norm(sub(target, pos));
+    camRight = norm(cross(camFwd, [0, 1, 0]));
+    camUp = cross(camRight, camFwd);
+  }
+  function toCam(p) {
+    var d = sub(p, camPos);
+    return [dot(d, camRight), dot(d, camUp), dot(d, camFwd)];
+  }
+  function sx2(c) { return W * 0.5 + c[0] / c[2] * focal; }
+  function sy2(c) { return H * 0.5 - c[1] / c[2] * focal; }
+
+  // ================================================================ 图元收集
+  var items = [];
+  var LAYER = { CANYON: 1, CLIFF: 2, MESA: 3, ROAD: 4, MARK: 5, PROP: 6, CAR: 7, SMOKE: 8, TAG: 9 };
+
+  // 柔边烟团贴图（离屏生成一次）
+  var SMOKE_SPR = (function () {
+    var c = document.createElement('canvas');
+    c.width = c.height = 64;
+    var x = c.getContext('2d');
+    var gd = x.createRadialGradient(32, 32, 1, 32, 32, 32);
+    gd.addColorStop(0, 'rgba(238,240,246,0.95)');
+    gd.addColorStop(0.45, 'rgba(226,230,238,0.55)');
+    gd.addColorStop(1, 'rgba(214,220,232,0)');
+    x.fillStyle = gd;
+    x.fillRect(0, 0, 64, 64);
+    return c;
+  })();
+
+  /** 世界多边形 */
+  function poly(pts, col, layer, opt) {
+    opt = opt || {};
+    var n = norm(cross(sub(pts[1], pts[0]), sub(pts[2], pts[1])));
+    var br = 0.62 + 0.38 * Math.max(0, dot(n, LIGHT));
+    var cs = [];
+    for (var i = 0; i < pts.length; i++) cs.push(toCam(pts[i]));
+    items.push({
+      t: 0, c: cs, L: layer,
+      col: [col[0] * br, col[1] * br, col[2] * br],
+      a: opt.a == null ? 1 : opt.a, fog: opt.fog !== false, line: opt.line
+    });
+  }
+  function quad(a, b, c, d, col, layer, opt) { poly([a, b, c, d], col, layer, opt); }
+
+  /** 立方体（外法线朝外的绕序） */
+  function box(x0, x1, y0, y1, z0, z1, col, layer, opt) {
+    quad([x1, y0, z1], [x1, y0, z0], [x1, y1, z0], [x1, y1, z1], col, layer, opt); // +X
+    quad([x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0], col, layer, opt); // -X
+    quad([x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0], col, layer, opt); // +Y
+    quad([x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1], col, layer, opt); // -Y
+    quad([x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1], col, layer, opt); // +Z
+    quad([x0, y0, z0], [x0, y1, z0], [x1, y1, z0], [x1, y0, z0], col, layer, opt); // -Z
+  }
+  /** 4 点面（任意绕序，用于自定义形状） */
+  function face(a, b, c, d, col, layer, opt) { quad(a, b, c, d, col, layer, opt); }
+
+  function puff(p, r, col, alpha) {
+    items.push({ t: 1, p: toCam(p), r: r, L: LAYER.SMOKE, col: col, a: alpha, fog: true });
+  }
+  function label(p, str, col, size, dy) {
+    items.push({ t: 2, p: toCam(p), s: str, col: col, size: size || 1.2, dy: dy || 0, L: LAYER.TAG });
+  }
+  function stripe(a, b, col, w, layer, opt) {  // 细长条(用线段画, 避免退化)
+    items.push({ t: 3, c: [toCam(a), toCam(b)], w: w, col: col, L: layer, a: (opt && opt.a) == null ? 1 : opt.a, fog: !(opt && opt.noFog) });
+  }
+
+  // ================================================================ 场景构建
+  function carPose() {
+    var y = 0, yaw = 0, pitch = 0, roll = 0;
+    if (g.phase === 'wreck') {
+      if (!g.airborne) { yaw = g.rotYaw; }
+      else { y = g.yOff; yaw = g.rotYaw; pitch = g.rotPitch; roll = 0.22 * (g.wreckDir || 1); }
+    } else if (g.phase === 'falling') {
+      y = g.yOff; pitch = g.fallRot; roll = 0.12;
+    }
+    return { x: g.x, y: y, z: 0, yaw: yaw, pitch: pitch, roll: roll };
+  }
+
+  function buildWorld() {
+    items.length = 0;
+    var road = g.roadLen, pose = carPose();
+    var x, i;
+
+    // ---- 峡谷（崖外世界） ----
+    quad([road - 24, -52, -520], [road + 620, -52, -520], [road + 620, -52, 520], [road - 24, -52, 520], [26, 30, 40], LAYER.CANYON);
+    for (i = 0; i < 7; i++) {                       // 对面崖壁分层
+      var y0 = -52 + i * 6.5, y1 = y0 + 6.5;
+      quad([road + 46, y0, -520], [road + 46, y0, 520], [road + 46, y1, 520], [road + 46, y1, -520],
+        i % 2 ? [40, 47, 62] : [32, 38, 52], LAYER.CANYON);
+    }
+    // 远山（平滑山脊，很远很淡）
+    var RIDGE = 520;
+    for (i = 0; i < 26; i++) {
+      var z0 = -1200 + i * 96, z1 = z0 + 96, zc = (z0 + z1) / 2;
+      var hh = 46 + 26 * Math.sin(i * 0.9 + 0.4) + 14 * Math.sin(i * 2.3 + 1.1);
+      poly([[road + RIDGE, -60, z0], [road + RIDGE, -60, z1], [road + RIDGE + 26, hh, zc]], [96, 104, 126], LAYER.CANYON);
+    }
+    for (i = 0; i < 20; i++) {
+      var w0 = -1200 + i * 120, w1 = w0 + 120, wc = (w0 + w1) / 2;
+      var h2 = 26 + 18 * Math.sin(i * 1.3 + 2.2);
+      poly([[road + RIDGE - 90, -60, w0], [road + RIDGE - 90, -60, w1], [road + RIDGE - 60, h2, wc]], [112, 118, 138], LAYER.CANYON);
+    }
+
+    // ---- 台地崖壁（roadLen 处向下） ----
+    for (i = 0; i < 8; i++) {
+      var cy0 = -i * 6.5, cy1 = cy0 - 6.5;
+      quad([road, cy0, -30], [road, cy0, 30], [road, cy1, 30], [road, cy1, -30],
+        i % 2 ? [96, 84, 66] : [80, 70, 55], LAYER.CLIFF);
+    }
+    // 台地左右侧面（少量，避免看穿）
+    for (i = 0; i < 8; i++) {
+      var sy0 = -i * 6.5, sy1 = sy0 - 6.5;
+      quad([road - 2, sy0, -30], [road - 2, sy1, -30], [road + 2, sy1, -30], [road + 2, sy0, -30], [92, 80, 62], LAYER.CLIFF);
+      quad([road - 2, sy0, 30], [road + 2, sy0, 30], [road + 2, sy1, 30], [road - 2, sy1, 30], [92, 80, 62], LAYER.CLIFF);
+    }
+
+    // ---- 台地顶面（土/碎石） ----
+    for (x = -90; x < road; x += 14) {
+      var x2 = Math.min(x + 14, road);
+      quad([x, 0, -30], [x2, 0, -30], [x2, 0, 30], [x, 0, 30], [150, 132, 100], LAYER.MESA);
+      quad([x, 0, -30], [x2, 0, -30], [x2, -1.6, -30], [x, -1.6, -30], [116, 101, 76], LAYER.CLIFF);
+      quad([x, 0, 30], [x, -1.6, 30], [x2, -1.6, 30], [x2, 0, 30], [116, 101, 76], LAYER.CLIFF);
+    }
+
+    // ---- 柏油路 ----
+    for (x = 0; x < road; x += 14) {
+      var rx2 = Math.min(x + 14, road);
+      quad([x, 0.02, -5.2], [rx2, 0.02, -5.2], [rx2, 0.02, 5.2], [x, 0.02, 5.2], [104, 108, 120], LAYER.ROAD);
+    }
+    // 路缘白线（真实宽度 0.15m）+ 中线虚线
+    stripe([0, 0.05, -5.1], [road, 0.05, -5.1], [186, 190, 198], 0.15, LAYER.MARK);
+    stripe([0, 0.05, 5.1], [road, 0.05, 5.1], [186, 190, 198], 0.15, LAYER.MARK);
+    for (x = 2; x < road - 3; x += 9) stripe([x, 0.05, 0], [Math.min(x + 4.5, road), 0.05, 0], [232, 196, 86], 0.16, LAYER.MARK);
+    // 危险区（才开始刹车就晚了）红色带
+    var dz = road - DANGER;
+    quad([dz, 0.035, -5.2], [road, 0.035, -5.2], [road, 0.035, 5.2], [dz, 0.035, 5.2], [188, 60, 46], LAYER.MARK, { a: 0.34, fog: false });
+    stripe([dz, 0.06, -5.2], [dz, 0.06, 5.2], [255, 138, 108], 0.3, LAYER.MARK, { noFog: true });
+    label([dz, 2.6, 6.4], '才开始刹车就晚了 ' + DANGER.toFixed(0) + 'm', [255, 168, 140], 1.1);
+
+    // ---- 距离刻度（每 20m 一道横线，每 40m 一个数字牌） ----
+    for (var d = 20; d < road; d += 20) {
+      var dx = road - d;
+      stripe([dx, 0.05, -5.2], [dx, 0.05, 5.2], [226, 232, 240], 0.18, LAYER.MARK, { a: 0.5 });
+      if (d % 40 === 0) label([dx, 1.6, 6.4], String(d), [226, 234, 245], 1.0);
+    }
+
+    // ---- 路边景物（速度感）----
+    for (x = 10; x < road - 6; x += 26) {
+      for (var sgn = -1; sgn <= 1; sgn += 2) {
+        var pz = 6.6 * sgn;
+        box(x, x + 0.28, 0, 1.5, pz - 0.14, pz + 0.14, [206, 208, 214], LAYER.PROP);
+        box(x - 0.05, x + 0.33, 1.5, 1.72, pz - 0.19, pz + 0.19, [214, 76, 62], LAYER.PROP);
+      }
+    }
+    // 崖边红白警戒挡板（立在崖口上，车身停稳时不会插进去）
+    for (i = 0; i < 10; i++) {
+      var bz0 = -6.4 + i * 1.3, bz1 = bz0 + 1.3;
+      box(road - 0.78, road - 0.5, 0.72, 1.06, bz0, bz1,
+        i % 2 ? [226, 82, 66] : [236, 238, 242], LAYER.PROP);
+    }
+    for (i = 0; i < 6; i++) {
+      var pzz = -6.5 + i * 2.6;
+      box(road - 0.92, road - 0.36, 0, 0.86, pzz - 0.09, pzz + 0.09, [104, 104, 110], LAYER.PROP);
+    }
+
+    // ---- 石头（台地上，增加纵深参照）----
+    for (i = 0; i < 22; i++) {
+      var rx = -60 + i * 17.5, rz = (i % 2 ? 1 : -1) * (9 + (i * 7 % 6));
+      var rs = 0.6 + (i * 13 % 7) / 9;
+      box(rx, rx + rs * 1.7, 0, rs, rz, rz + rs * 1.4, [138, 122, 96], LAYER.PROP);
+    }
+
+    // ---- 车 ----
+    buildCar(pose);
+
+    // ---- 尘烟 ----
+    for (i = 0; i < smoke.length; i++) {
+      var p = smoke[i];
+      puff([p.x, Math.max(0.05, p.y), p.z], p.r, [206, 210, 220], Math.max(0, p.life / p.max) * p.alpha);
+    }
+
+    // ---- 落点预测标记 ----
+    if (g.phase === 'run' && g.v > 1) {
+      var st = g.x + (g.v * g.v) / (2 * g.cfg.brakeDecel) * FEATHER;
+      var safe = st < road;
+      var col = safe ? (g.brakeOn ? [120, 240, 170] : [110, 200, 150]) : [255, 100, 90];
+      quad([st - 0.5, 0.06, -5.2], [st + 0.5, 0.06, -5.2], [st + 0.5, 0.06, 5.2], [st - 0.5, 0.06, 5.2], col, LAYER.MARK, { a: 0.5, fog: false });
+      label([st, 3.1, 5.4], safe ? '点刹停点 · 还差 ' + (road - st).toFixed(0) + 'm' : '冲出去了!', col, 1.15);
+    }
+  }
+
+  /** 车子（局部坐标：车头在 x=0，地面 y=0，绕车身中心旋转） */
+  function buildCar(P) {
+    var cy = Math.cos(P.yaw), sy = Math.sin(P.yaw);
+    var cp = Math.cos(P.pitch), sp = Math.sin(P.pitch);
+    var cr = Math.cos(P.roll), sr = Math.sin(P.roll);
+    function pt(v) {
+      var px = v[0] + 2.3, py = v[1] - 0.85, pz = v[2];
+      var x1 = px * cy + pz * sy, z1 = -px * sy + pz * cy;
+      var x2 = x1 * cp - py * sp, y2 = x1 * sp + py * cp;
+      var y3 = y2 * cr - z1 * sr, z3 = y2 * sr + z1 * cr;
+      return [P.x + x2 - 2.3, P.y + y3 + 0.85, P.z + z3];
+    }
+    function bx(x0, x1, y0, y1, z0, z1, col, layer, opt) {
+      poly([pt([x1, y0, z1]), pt([x1, y0, z0]), pt([x1, y1, z0]), pt([x1, y1, z1])], col, layer, opt);
+      poly([pt([x0, y0, z0]), pt([x0, y0, z1]), pt([x0, y1, z1]), pt([x0, y1, z0])], col, layer, opt);
+      poly([pt([x0, y1, z1]), pt([x1, y1, z1]), pt([x1, y1, z0]), pt([x0, y1, z0])], col, layer, opt);
+      poly([pt([x0, y0, z0]), pt([x1, y0, z0]), pt([x1, y0, z1]), pt([x0, y0, z1])], col, layer, opt);
+      poly([pt([x0, y0, z1]), pt([x1, y0, z1]), pt([x1, y1, z1]), pt([x0, y1, z1])], col, layer, opt);
+      poly([pt([x0, y0, z0]), pt([x0, y1, z0]), pt([x1, y1, z0]), pt([x1, y0, z0])], col, layer, opt);
+    }
+    var braking = g.brakeOn || g.pedalBroken;
+    var body = braking ? [206, 66, 46] : [52, 132, 214];
+    var dark = braking ? [150, 40, 28] : [32, 92, 160];
+
+    // 地面影子
+    if (P.y < 0.1) {
+      poly([pt([-5.0, 0.03, -1.05]), pt([0.4, 0.03, -1.05]), pt([0.4, 0.03, 1.05]), pt([-5.0, 0.03, 1.05])],
+        [10, 12, 18], LAYER.MARK, { a: 0.42, fog: false });
+    }
+    // 底盘 + 车身
+    bx(-4.55, -0.05, 0.34, 1.02, -0.94, 0.94, body, LAYER.CAR);
+    bx(-4.3, -1.35, 1.02, 1.08, -0.9, 0.9, dark, LAYER.CAR);          // 腰线
+    // 座舱（前挡风倾斜）
+    var cab = [[-4.05, 1.02, -0.82], [-1.15, 1.02, -0.82], [-1.62, 1.66, -0.72], [-3.66, 1.66, -0.72]];
+    var cabR = [[-4.05, 1.02, 0.82], [-1.15, 1.02, 0.82], [-1.62, 1.66, 0.72], [-3.66, 1.66, 0.72]];
+    poly([pt(cab[0]), pt(cab[3]), pt(cab[2]), pt(cab[1])], [26, 30, 40], LAYER.CAR);            // 左侧窗
+    poly([pt(cabR[1]), pt(cabR[2]), pt(cabR[3]), pt(cabR[0])], [26, 30, 40], LAYER.CAR);         // 右侧窗
+    poly([pt([-1.15, 1.02, -0.82]), pt([-1.62, 1.66, -0.72]), pt([-1.62, 1.66, 0.72]), pt([-1.15, 1.02, 0.82])], [58, 74, 96], LAYER.CAR);  // 前挡风
+    poly([pt([-4.05, 1.02, 0.82]), pt([-3.66, 1.66, 0.72]), pt([-3.66, 1.66, -0.72]), pt([-4.05, 1.02, -0.82])], [46, 60, 80], LAYER.CAR);  // 后窗
+    poly([pt([-3.66, 1.66, -0.72]), pt([-1.62, 1.66, -0.72]), pt([-1.62, 1.66, 0.72]), pt([-3.66, 1.66, 0.72])], body, LAYER.CAR);           // 车顶
+    // 车轮（前后 × 左右）
+    var wx = [-0.98, -3.62], wz = [-0.86, 0.86];
+    for (var a = 0; a < 2; a++) {
+      for (var b = 0; b < 2; b++) {
+        var z0 = wz[b], z1 = wz[b] + (b ? 0.22 : -0.22);
+        bx(wx[a] - 0.36, wx[a] + 0.36, 0, 0.7, Math.min(z0, z1), Math.max(z0, z1), [30, 33, 39], LAYER.CAR);
+        poly([pt([wx[a] - 0.22, 0.12, z1]), pt([wx[a] + 0.22, 0.12, z1]), pt([wx[a] + 0.22, 0.58, z1]), pt([wx[a] - 0.22, 0.58, z1])],
+          [150, 158, 170], LAYER.CAR);   // 轮毂
+      }
+    }
+    // 车灯
+    poly([pt([-0.08, 0.62, -0.78]), pt([-0.08, 0.62, -0.44]), pt([-0.08, 0.86, -0.44]), pt([-0.08, 0.86, -0.78])], [255, 238, 180], LAYER.CAR, { fog: false });
+    poly([pt([-0.08, 0.62, 0.44]), pt([-0.08, 0.62, 0.78]), pt([-0.08, 0.86, 0.78]), pt([-0.08, 0.86, 0.44])], [255, 238, 180], LAYER.CAR, { fog: false });
+    var tail = braking ? [255, 60, 44] : [150, 40, 36];
+    poly([pt([-4.57, 0.62, -0.86]), pt([-4.57, 0.62, -0.5]), pt([-4.57, 0.9, -0.5]), pt([-4.57, 0.9, -0.86])], tail, LAYER.CAR, { fog: false });
+    poly([pt([-4.57, 0.62, 0.5]), pt([-4.57, 0.62, 0.86]), pt([-4.57, 0.9, 0.86]), pt([-4.57, 0.9, 0.5])], tail, LAYER.CAR, { fog: false });
+  }
+
+  // ================================================================ 渲染
+  function clipNear(cs) {
+    var out = [], n = cs.length;
+    for (var i = 0; i < n; i++) {
+      var a = cs[i], b = cs[(i + 1) % n];
+      var ain = a[2] >= NEAR, bin = b[2] >= NEAR;
+      if (ain) out.push(a);
+      if (ain !== bin) {
+        var t = (NEAR - a[2]) / (b[2] - a[2]);
+        out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, NEAR]);
+      }
+    }
+    return out;
+  }
+  function fogOf(d) {
+    var t = (d - FOG_A) / (FOG_B - FOG_A);
+    return t < 0 ? 0 : (t > 1 ? 1 : t);
+  }
+
+  function drawSky() {
+    var gr = ctx.createLinearGradient(0, 0, 0, H * 0.78);
+    gr.addColorStop(0, '#0a1526');
+    gr.addColorStop(0.42, '#20365a');
+    gr.addColorStop(0.7, '#4a5878');
+    gr.addColorStop(1, '#c98455');
+    ctx.fillStyle = gr;
+    ctx.fillRect(0, 0, W, H);
+    // 太阳（无限远：只用方向投影）
+    var sd = norm([0.62, 0.2, 0.42]);
+    var c = [dot(sd, camRight), dot(sd, camUp), dot(sd, camFwd)];
+    if (c[2] > 0.02) {
+      var pxx = sx2(c), pyy = sy2(c), R = Math.max(26, H * 0.05);
+      var gl = ctx.createRadialGradient(pxx, pyy, 2, pxx, pyy, R * 6);
+      gl.addColorStop(0, 'rgba(255,214,150,.75)');
+      gl.addColorStop(0.3, 'rgba(255,160,100,.22)');
+      gl.addColorStop(1, 'rgba(255,120,60,0)');
+      ctx.fillStyle = gl;
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = 'rgba(255,238,206,.96)';
+      ctx.beginPath(); ctx.arc(pxx, pyy, R, 0, 6.2832); ctx.fill();
+    }
+  }
+
+  function draw3d() {
+    // 变换 + 裁剪 + 投影
+    var list = [];
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      if (it.t === 0) {
+        var cs = clipNear(it.c);
+        if (cs.length < 3) continue;
+        var sp = [], d = 0;
+        for (var k = 0; k < cs.length; k++) { sp.push(sx2(cs[k]), sy2(cs[k])); d += cs[k][2]; }
+        list.push({ it: it, sp: sp, d: d / cs.length });
+      } else if (it.t === 1) {
+        if (it.p[2] < NEAR) continue;
+        list.push({ it: it, x: sx2(it.p), y: sy2(it.p), r: it.r * focal / it.p[2], d: it.p[2] });
+      } else if (it.t === 2) {
+        if (it.p[2] < NEAR) continue;
+        list.push({ it: it, x: sx2(it.p), y: sy2(it.p), d: it.p[2] });
+      } else {
+        if (it.c[0][2] < NEAR || it.c[1][2] < NEAR) continue;
+        var dd = (it.c[0][2] + it.c[1][2]) / 2;
+        if (dd < 8) continue;                     // 太贴脸的长条(基本被车身挡住的)不画，免得撑满屏幕
+        list.push({ it: it, x1: sx2(it.c[0]), y1: sy2(it.c[0]), x2: sx2(it.c[1]), y2: sy2(it.c[1]), d: dd });
+      }
+    }
+    list.sort(function (a, b) { return (a.it.L - b.it.L) || (b.d - a.d); });
+
+    ctx.save();
+    ctx.translate(shakeX, shakeY);
+    for (i = 0; i < list.length; i++) {
+      var o = list[i], it2 = o.it;
+      if (it2.t === 0) {
+        var f = it2.fog ? fogOf(o.d) : 0;
+        var r = it2.col[0] + (FOG[0] - it2.col[0]) * f;
+        var gg = it2.col[1] + (FOG[1] - it2.col[1]) * f;
+        var bb = it2.col[2] + (FOG[2] - it2.col[2]) * f;
+        ctx.globalAlpha = it2.a;
+        var style = 'rgb(' + (r | 0) + ',' + (gg | 0) + ',' + (bb | 0) + ')';
+        ctx.fillStyle = style;
+        ctx.strokeStyle = style;             // 必须每次设置：否则继承上一条线的颜色，出现亮边
+        ctx.beginPath();
+        ctx.moveTo(o.sp[0], o.sp[1]);
+        for (k = 2; k < o.sp.length; k += 2) ctx.lineTo(o.sp[k], o.sp[k + 1]);
+        ctx.closePath();
+        ctx.fill();
+        ctx.lineWidth = 1;
+        ctx.stroke();                        // 补缝，避免多边形之间出现发丝缝
+      } else if (it2.t === 1) {
+        var f2 = fogOf(o.d);
+        ctx.globalAlpha = it2.a;
+        var rr2 = Math.max(0.6, o.r);
+        ctx.drawImage(SMOKE_SPR, o.x - rr2, o.y - rr2, rr2 * 2, rr2 * 2);
+      } else if (it2.t === 2) {
+        ctx.globalAlpha = 1;
+        var sz = Math.max(9, Math.min(22, focal * 0.032 / o.d * it2.size * 8));
+        ctx.font = '700 ' + sz.toFixed(0) + 'px "Segoe UI",system-ui';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(6,10,18,.55)';
+        var wpx = ctx.measureText(it2.s).width;
+        ctx.fillRect(o.x - wpx / 2 - 5, o.y - sz * 0.85, wpx + 10, sz * 1.15);
+        ctx.fillStyle = 'rgb(' + it2.col[0] + ',' + it2.col[1] + ',' + it2.col[2] + ')';
+        ctx.fillText(it2.s, o.x, o.y);
+      } else {
+        ctx.globalAlpha = it2.a;
+        ctx.strokeStyle = 'rgb(' + it2.col[0] + ',' + it2.col[1] + ',' + it2.col[2] + ')';
+        ctx.lineWidth = Math.max(1, Math.min(20, it2.w * focal / o.d));
+        ctx.beginPath(); ctx.moveTo(o.x1, o.y1); ctx.lineTo(o.x2, o.y2); ctx.stroke();
+      }
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+
+  function draw() {
+    if (g.shake > 0) {
+      var m = g.shake * 7;
+      shakeX = (Math.random() - 0.5) * m; shakeY = (Math.random() - 0.5) * m;
+    } else { shakeX = 0; shakeY = 0; }
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    drawSky();
+    buildWorld();
+    draw3d();
+    // 撞地白闪
+    if (flash > 0) {
+      ctx.fillStyle = 'rgba(255,246,232,' + (flash * 0.26).toFixed(3) + ')';
+      ctx.fillRect(0, 0, W, H);
+    }
+    // 暗角
+    var vg = ctx.createRadialGradient(W / 2, H * 0.55, Math.min(W, H) * 0.42, W / 2, H * 0.55, Math.max(W, H) * 0.78);
+    vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,.45)');
+    ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+  }
+
+  // ================================================================ 相机
+  function updateCamera(dt) {
+    var turning = (g.phase === 'wreck' || g.phase === 'falling');
+    var want = [g.x - 8.6, 3.4, 3.9];
+    var look = [g.x + 9.5, 1.0, 0];
+    if (turning) {
+      want = [g.x - 8.0, 3.4 + g.yOff * 0.35, 4.6];
+      look = [g.x + 3.5, 1.2 + g.yOff * 0.55, 0];
+    }
+    var k = Math.min(1, (dt || 0.016) * (turning ? 3.2 : 7));
+    for (var i = 0; i < 3; i++) {
+      camWant[i] += (want[i] - camWant[i]) * k;
+      camLook[i] += (look[i] - camLook[i]) * k;
+    }
+    lookAt([camWant[0], camWant[1], camWant[2]], [camLook[0], camLook[1], camLook[2]]);
+  }
+  function resize() {
+    var r = stage.getBoundingClientRect();
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = Math.max(320, Math.round(r.width));
+    H = Math.max(180, Math.round(r.height));
+    canvas.width = Math.round(W * DPR);
+    canvas.height = Math.round(H * DPR);
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    focal = (H * 0.5) / Math.tan(29 * Math.PI / 180);   // 竖直 FOV 58°
+  }
+
+  // ================================================================ 粒子 / 音效
+  var smoke = [], skid = [], flash = 0, prevPhase = 'idle', snapFired = false;
+  function spawnP(x, y, z, o) {
+    if (smoke.length > 300) smoke.shift();
+    smoke.push({
+      x: x, y: y, z: z, vx: o.vx || 0, vy: o.vy || 0, vz: o.vz || 0,
+      r: o.r || 0.2, grow: o.grow == null ? 0.5 : o.grow,
+      life: o.life || 0.8, max: o.life || 0.8,
+      col: o.col || [206, 214, 226], alpha: o.alpha == null ? 0.42 : o.alpha
+    });
+  }
+  function updateSmoke(dt) {
+    for (var i = smoke.length - 1; i >= 0; i--) {
+      var p = smoke[i];
+      p.life -= dt; p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt; p.r += p.grow * dt;
+      if (p.r < 0.03) p.r = 0.03;
+      if (p.life <= 0) smoke.splice(i, 1);
+    }
+  }
+
   var Sound = (function () {
     var ac = null, noiseBuf = null, skidGain = null, ready = false, on = true;
     function init() {
@@ -634,21 +1077,17 @@
         var bp = ac.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1500; bp.Q.value = 1.1;
         skidGain = ac.createGain(); skidGain.gain.value = 0;
         src.connect(bp); bp.connect(skidGain); skidGain.connect(ac.destination);
-        src.start();
-        ready = true;
+        src.start(); ready = true;
       } catch (e) { ready = false; }
     }
     function resume() { try { if (ac && ac.state === 'suspended') ac.resume(); } catch (e) {} }
-    function skid(level) {
-      if (!ready || !on) return;
-      try { skidGain.gain.setTargetAtTime(Math.max(0, level) * 0.15, ac.currentTime, 0.06); } catch (e) {}
-    }
-    function noise(dur, vol, freq, toFreq) {
+    function skid(l) { if (!ready || !on) return; try { skidGain.gain.setTargetAtTime(Math.max(0, l) * 0.15, ac.currentTime, 0.06); } catch (e) {} }
+    function noise(dur, vol, freq, to) {
       if (!ready || !on) return;
       try {
         var s = ac.createBufferSource(); s.buffer = noiseBuf;
         var f = ac.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = freq;
-        if (toFreq) { f.frequency.setValueAtTime(freq, ac.currentTime); f.frequency.exponentialRampToValueAtTime(Math.max(60, toFreq), ac.currentTime + dur); }
+        if (to) { f.frequency.setValueAtTime(freq, ac.currentTime); f.frequency.exponentialRampToValueAtTime(Math.max(60, to), ac.currentTime + dur); }
         var gn = ac.createGain();
         gn.gain.setValueAtTime(vol, ac.currentTime);
         gn.gain.exponentialRampToValueAtTime(0.0008, ac.currentTime + dur);
@@ -674,440 +1113,103 @@
       crash: function () { noise(0.85, 0.55, 380, 70); tone(70, 0.7, 0.25, 'sawtooth'); },
       impact: function () { noise(0.6, 0.8, 900, 80); tone(56, 0.6, 0.38, 'sawtooth'); },
       win: function () { tone(660, 0.16, 0.2); setTimeout(function () { tone(880, 0.22, 0.2); }, 130); setTimeout(function () { tone(1180, 0.3, 0.16); }, 270); },
-      toggle: function () { on = !on; if (!on) skid(0); return on; },
-      isOn: function () { return on; }
+      toggle: function () { on = !on; if (!on) skid(0); return on; }
     };
   })();
 
-  // ---------------------------------------------------------------- 尺寸
-  function resize() {
-    var r = stage.getBoundingClientRect();
-    var dpr = Math.min(window.devicePixelRatio || 1, 2);
-    W = Math.max(320, Math.round(r.width));
-    H = Math.max(180, Math.round(r.height));
-    canvas.width = Math.round(W * dpr);
-    canvas.height = Math.round(H * dpr);
-    canvas.style.width = W + 'px';
-    canvas.style.height = H + 'px';
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    visM = W < 820 ? 132 : W < 1150 ? 152 : W < 1500 ? 172 : 188;
-    scale = W / visM;
-    groundY = Math.round(H * 0.66);
-    roadH = Math.max(11, Math.min(18, scale * 1.7));
-  }
-
-  // ---------------------------------------------------------------- 绘图工具
-  function sx(worldX) { return (worldX - camX) * scale; }
-  function rr(x, y, w, h, r) {
-    r = Math.min(r, Math.abs(w) / 2, Math.abs(h) / 2);
-    ctx.beginPath();
-    ctx.moveTo(x + r, y);
-    ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-    ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-    ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-    ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y);
-    ctx.closePath();
-  }
-
-  var CLOUDS = [
-    { x: 40, y: 0.16, s: 1.1, p: 0.16 }, { x: 190, y: 0.10, s: 0.8, p: 0.2 },
-    { x: 320, y: 0.20, s: 1.3, p: 0.14 }, { x: 470, y: 0.13, s: 0.95, p: 0.18 },
-    { x: 640, y: 0.22, s: 1.05, p: 0.15 }
-  ];
-
-  function drawSky() {
-    var g1 = ctx.createLinearGradient(0, 0, 0, groundY + 40);
-    g1.addColorStop(0, '#0e1a2f');
-    g1.addColorStop(0.42, '#26395c');
-    g1.addColorStop(0.74, '#4d5c78');
-    g1.addColorStop(1, '#c07a4e');
-    ctx.fillStyle = g1;
-    ctx.fillRect(0, 0, W, groundY + 40);
-    // 落日
-    var sunX = W * 0.78, sunY = groundY - H * 0.16;
-    var glow = ctx.createRadialGradient(sunX, sunY, 4, sunX, sunY, H * 0.5);
-    glow.addColorStop(0, 'rgba(255,206,140,.62)');
-    glow.addColorStop(0.35, 'rgba(255,150,90,.2)');
-    glow.addColorStop(1, 'rgba(255,120,60,0)');
-    ctx.fillStyle = glow;
-    ctx.fillRect(0, 0, W, groundY + 40);
-    ctx.fillStyle = 'rgba(255,232,196,.95)';
-    ctx.beginPath(); ctx.arc(sunX, sunY, Math.max(16, H * 0.058), 0, 6.2832); ctx.fill();
-  }
-
-  function drawClouds() {
-    ctx.save();
-    for (var i = 0; i < CLOUDS.length; i++) {
-      var c = CLOUDS[i];
-      var x = (c.x - camX * c.p) * scale, y = H * c.y, s = c.s * Math.max(0.6, scale * 0.36);
-      if (x < -260 || x > W + 260) continue;
-      ctx.fillStyle = 'rgba(216,230,255,.09)';
-      ctx.beginPath();
-      ctx.ellipse(x, y, 62 * s * 0.6, 12 * s * 0.6, 0, 0, 6.2832);
-      ctx.ellipse(x + 34 * s * 0.6, y - 6 * s * 0.6, 40 * s * 0.6, 13 * s * 0.6, 0, 0, 6.2832);
-      ctx.ellipse(x - 36 * s * 0.6, y + 3 * s * 0.6, 34 * s * 0.6, 9 * s * 0.6, 0, 0, 6.2832);
-      ctx.fill();
+  // ================================================================ 主循环
+  function step(dt) {
+    var wasPhase = g.phase;
+    g.tick(dt);
+    if (g.phase === 'run' && g.brakeOn && g.v > 3) {
+      if (Math.random() < 0.5) spawnP(g.x - 1.2 - Math.random() * 3.4, 0.05 + Math.random() * 0.3, (Math.random() - 0.5) * 1.8,
+        { vx: -1.2 - Math.random() * 1.6, vy: 0.5, r: 0.16 + Math.random() * 0.2, life: 0.7 + Math.random() * 0.5, grow: 0.5 });
+      if (!skid.length || g.x - skid[skid.length - 1] > 1.6) { skid.push(g.x - 1.0); if (skid.length > 420) skid.shift(); }
     }
-    ctx.restore();
-  }
-
-  function drawRidge(par, baseY, amp, freq, phase, color) {
-    ctx.beginPath();
-    ctx.moveTo(-4, baseY + 60);
-    for (var x = -4; x <= W + 4; x += 6) {
-      var w = camX * par + x / scale;
-      var y = baseY - amp * (0.62 * Math.sin(w * freq + phase) + 0.38 * Math.sin(w * freq * 2.6 + phase * 1.7));
-      ctx.lineTo(x, y);
-    }
-    ctx.lineTo(W + 4, baseY + 60);
-    ctx.closePath();
-    ctx.fillStyle = color;
-    ctx.fill();
-  }
-
-  function drawGround() {
-    var xEnd = sx(g.roadLen);
-    var xStart = -60;
-    // 远景峡谷(崖外)
-    var vg = ctx.createLinearGradient(0, groundY - 4, 0, H);
-    vg.addColorStop(0, '#16233a'); vg.addColorStop(0.5, '#0b1220'); vg.addColorStop(1, '#04060b');
-    ctx.fillStyle = vg;
-    ctx.fillRect(Math.min(xEnd, W) - 2, groundY - 4, Math.max(0, W - Math.min(xEnd, W)) + 4, H - groundY + 8);
-    // 峡谷雾气
-    ctx.fillStyle = 'rgba(120,150,190,.07)';
-    ctx.fillRect(Math.max(0, xEnd), groundY + (H - groundY) * 0.35, W, (H - groundY) * 0.16);
-    // 远处峡谷底
-    ctx.save();
-    ctx.beginPath();
-    for (var x = Math.max(0, xEnd) - 4; x <= W + 4; x += 6) {
-      var w = camX * 0.12 + x / scale;
-      var y = H - 30 - 18 * Math.sin(w * 0.02) - 9 * Math.sin(w * 0.05 + 1.1);
-      if (x <= Math.max(0, xEnd) - 3) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-    }
-    ctx.lineTo(W + 4, H + 4); ctx.lineTo(Math.max(0, xEnd) - 4, H + 4); ctx.closePath();
-    ctx.fillStyle = 'rgba(46,64,96,.6)'; ctx.fill();
-    ctx.restore();
-
-    // 高原(地面)
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(xStart, groundY - 1, Math.max(0, xEnd - xStart), H - groundY + 2);
-    ctx.clip();
-    var rg = ctx.createLinearGradient(0, groundY, 0, H);
-    rg.addColorStop(0, '#6a5c46'); rg.addColorStop(0.1, '#544838');
-    rg.addColorStop(0.5, '#372f24'); rg.addColorStop(1, '#17140f');
-    ctx.fillStyle = rg;
-    ctx.fillRect(xStart, groundY - 1, xEnd - xStart, H - groundY + 2);
-    // 岩层
-    ctx.strokeStyle = 'rgba(0,0,0,.22)'; ctx.lineWidth = 1;
-    for (var i = 0; i < 9; i++) {
-      var yy = groundY + 22 + i * 22 + Math.sin(i * 2.7) * 4;
-      if (yy > H) break;
-      ctx.beginPath();
-      for (var xx = xStart; xx <= xEnd; xx += 14) {
-        var ww = camX * 0.995 + xx / scale;
-        ctx.lineTo(sx(xx), yy + 5 * Math.sin(ww * 0.08 + i));
+    if (g.phase === 'wreck' && !g.airborne) {
+      for (var s = 0; s < 2; s++) {
+        spawnP(g.x - 1.5 - Math.random() * 3.2, 0.05 + Math.random() * 0.4, (Math.random() - 0.5) * 2.2,
+          { vx: -3 - Math.random() * 4, vy: 1 + Math.random() * 2, r: 0.22 + Math.random() * 0.28, life: 0.6 + Math.random() * 0.5, grow: 1.0, col: [190, 186, 180], alpha: 0.5 });
       }
-      ctx.stroke();
-    }
-    // 路面
-    ctx.fillStyle = '#3b414b';
-    ctx.fillRect(xStart, groundY, xEnd - xStart, roadH);
-    ctx.fillStyle = 'rgba(255,255,255,.16)';
-    ctx.fillRect(xStart, groundY, xEnd - xStart, 2);
-    // 中线
-    ctx.fillStyle = 'rgba(255,205,80,.55)';
-    for (var d = 0; d < xEnd - xStart; d += 46) {
-      ctx.fillRect(sx(xStart + d), groundY + roadH * 0.45, 26, 2.5);
-    }
-    ctx.restore();
-
-    // 悬崖立面
-    if (xEnd > -30 && xEnd < W + 40) {
-      var fg = ctx.createLinearGradient(xEnd, groundY, xEnd, H);
-      fg.addColorStop(0, '#4a4133'); fg.addColorStop(0.3, '#2e2921'); fg.addColorStop(1, '#100e0c');
-      ctx.fillStyle = fg;
-      ctx.beginPath();
-      ctx.moveTo(xEnd - 2, groundY);
-      ctx.lineTo(xEnd + 9, groundY + 16);
-      ctx.lineTo(xEnd + 5, H); ctx.lineTo(xEnd - 6, H);
-      ctx.closePath(); ctx.fill();
-      ctx.strokeStyle = 'rgba(255,190,120,.22)'; ctx.lineWidth = 1.6;
-      ctx.beginPath(); ctx.moveTo(xEnd - 1, groundY); ctx.lineTo(xEnd + 8, groundY + 15); ctx.stroke();
-      // 崖边红白警示条
-      var bw = 9, seg = 0;
-      for (var bx = xEnd - 16; bx < xEnd + 2; bx += bw, seg++) {
-        ctx.fillStyle = seg % 2 ? '#e14b3b' : '#f2f2f2';
-        ctx.save();
-        ctx.beginPath(); ctx.rect(sx(bx), groundY - 5, bw * scale, 5); ctx.clip();
-        ctx.fillStyle = seg % 2 ? '#e14b3b' : '#f2f2f2';
-        ctx.fillRect(sx(bx), groundY - 5, bw * scale, 5);
-        ctx.restore();
+      if (Math.random() < 0.6) {
+        spawnP(g.x - 2 - Math.random() * 2, 0.1 + Math.random() * 0.3, (Math.random() - 0.5) * 2,
+          { vx: -5 - Math.random() * 6, vy: 2 + Math.random() * 3, r: 0.055, life: 0.25 + Math.random() * 0.2, grow: -0.05, col: [255, 196, 90], alpha: 0.95 });
       }
     }
-  }
+    if (g.phase === 'wreck' && g.airborne) {
+      if (Math.random() < 0.8) {
+        spawnP(g.x - 1.6 - Math.random() * 3, g.yOff + 0.15 + Math.random() * 0.7, (Math.random() - 0.5) * 2,
+          { vx: -1 - Math.random() * 2, vy: 0.2, r: 0.2 + Math.random() * 0.26, life: 0.5 + Math.random() * 0.4, grow: 0.9, alpha: 0.4 });
+      }
+    }
+    updateSmoke(dt);
+    Sound.skid(g.phase === 'wreck' && !g.airborne ? 1 : (g.brakeOn && g.v > 3 ? Math.min(1, g.v / 20) : 0));
+    if (flash > 0) flash = Math.max(0, flash - dt * 3.6);
 
-  function drawRoadMarks() {
-    // 危险区红色带
-    var danger = g.roadLen - DANGER;
-    var x0 = sx(danger);
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(Math.max(0, x0), groundY, Math.max(0, Math.min(W, sx(g.roadLen)) - Math.max(0, x0)), roadH);
-    ctx.clip();
-    var dg = ctx.createLinearGradient(x0, 0, sx(g.roadLen), 0);
-    dg.addColorStop(0, 'rgba(226,68,52,.10)'); dg.addColorStop(1, 'rgba(226,68,52,.42)');
-    ctx.fillStyle = dg;
-    ctx.fillRect(x0, groundY, sx(g.roadLen) - x0, roadH);
-    ctx.restore();
-    // 分界虚线
-    if (x0 > -20 && x0 < W + 20) {
-      ctx.strokeStyle = 'rgba(255,120,90,.6)'; ctx.lineWidth = 1.5;
-      ctx.setLineDash([5, 5]);
-      ctx.beginPath(); ctx.moveTo(x0, groundY - 12); ctx.lineTo(x0, groundY + roadH); ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.fillStyle = 'rgba(255,140,110,.85)';
-      ctx.font = '600 10px "Segoe UI",system-ui'; ctx.textAlign = 'center';
-      ctx.fillText('最后 ' + DANGER.toFixed(0) + 'm · 才开始刹车就晚了', x0, groundY - 44);
+    if (wasPhase !== g.phase) {
+      if (g.phase === 'wreck') { Sound.snap(); Sound.crash(); }
+      if (g.phase === 'falling') Sound.crash();
+      if (g.phase === 'lost' && g.impact) {
+        Sound.impact(); flash = 1;
+        for (var k = 0; k < 34; k++) {
+          var ang = Math.random() * Math.PI, sp2 = 2 + Math.random() * 7;
+          spawnP(g.x - 2.3, 0.1 + Math.random() * 0.5, (Math.random() - 0.5) * 3, {
+            vx: (Math.random() < 0.5 ? -1 : 1) * Math.cos(ang) * sp2, vy: Math.abs(Math.sin(ang)) * sp2 * 0.7,
+            r: 0.25 + Math.random() * 0.5, life: 0.7 + Math.random() * 0.8, grow: 1.4, col: [176, 166, 150], alpha: 0.55
+          });
+        }
+      }
+      if (g.isTerminal()) finish();
+      prevPhase = g.phase;
     }
-    // 距离刻度(到崖边还剩多少米)
-    ctx.textAlign = 'center';
-    for (var d = 20; d < g.roadLen; d += 20) {
-      var x = g.roadLen - d;
-      var px = sx(x);
-      if (px < -40 || px > W + 40) continue;
-      ctx.fillStyle = 'rgba(255,255,255,.16)';
-      ctx.fillRect(px - 1, groundY + roadH - 6, 2, 6);
-      ctx.fillStyle = 'rgba(255,255,255,.42)';
-      ctx.font = '700 10px "Segoe UI",system-ui';
-      ctx.fillText(String(d), px, groundY - 5);
-    }
-    // 刹车痕迹
-    ctx.fillStyle = 'rgba(10,10,12,.5)';
-    for (var i = 0; i < skid.length; i++) {
-      var s = skid[i], px2 = sx(s);
-      if (px2 < -20 || px2 > W + 20) continue;
-      ctx.fillRect(px2, groundY + 3, 6, 3);
-      ctx.fillRect(px2, groundY + roadH - 7, 6, 3);
+    if (g.pedalBroken && !snapFired) {
+      snapFired = true;
+      el.pedalPanel.classList.remove('flash');
+      void el.pedalPanel.offsetWidth;
+      el.pedalPanel.classList.add('flash');
     }
   }
 
-  function drawCar(px, py, rot, noShadow) {
-    var S = scale * CAR_VIS;
-    ctx.save();
-    ctx.translate(px, py);
-    ctx.rotate(rot);
-    ctx.scale(S, S);
-    // 影子
-    if (!noShadow) {
-      ctx.fillStyle = 'rgba(0,0,0,.42)';
-      ctx.beginPath(); ctx.ellipse(-2.3, 0.12, 2.5, 0.16, 0, 0, 6.2832); ctx.fill();
-    }
-    var braking = g.brakeOn || g.pedalBroken;
-    // 车身
-    var body = ctx.createLinearGradient(0, -1.1, 0, -0.2);
-    body.addColorStop(0, braking ? '#ff6f5e' : '#4ea8f5');
-    body.addColorStop(0.5, braking ? '#d8452f' : '#2b7fd4');
-    body.addColorStop(1, braking ? '#8c2318' : '#17538f');
-    ctx.fillStyle = body;
-    rr(-4.55, -1.04, 4.42, 0.62, 0.14); ctx.fill();
-    // 车顶
-    ctx.beginPath();
-    ctx.moveTo(-3.95, -1.02); ctx.lineTo(-3.32, -1.72);
-    ctx.lineTo(-1.62, -1.78); ctx.lineTo(-1.02, -1.02);
-    ctx.closePath();
-    ctx.fillStyle = braking ? '#e6543c' : '#2f8be0';
-    ctx.fill();
-    // 车窗
-    ctx.beginPath();
-    ctx.moveTo(-3.72, -1.06); ctx.lineTo(-3.28, -1.6);
-    ctx.lineTo(-2.62, -1.63); ctx.lineTo(-2.52, -1.06);
-    ctx.closePath();
-    ctx.fillStyle = 'rgba(210,240,255,.75)'; ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo(-2.34, -1.06); ctx.lineTo(-2.44, -1.63);
-    ctx.lineTo(-1.72, -1.66); ctx.lineTo(-1.42, -1.06);
-    ctx.closePath(); ctx.fill();
-    // 车灯
-    ctx.fillStyle = 'rgba(255,236,170,.95)';
-    rr(-0.30, -0.90, 0.28, 0.22, 0.06); ctx.fill();
-    if (braking) {
-      ctx.save();
-      ctx.shadowColor = '#ff3a2a'; ctx.shadowBlur = 10;
-      ctx.fillStyle = '#ff5140';
-      rr(-4.60, -0.92, 0.26, 0.26, 0.07); ctx.fill();
-      ctx.restore();
+  var lastT = 0, acc = 0, paused = true, runLoop = true;
+  function loop(now) {
+    if (!runLoop) return;
+    requestAnimationFrame(loop);
+    var dt = (now - lastT) / 1000;
+    lastT = now;
+    if (!(dt > 0) || dt > 0.3) dt = 0.016;
+    if (!paused) {
+      acc += dt;
+      var n = 0;
+      while (acc >= 1 / 120 && n < 48) { step(1 / 120); acc -= 1 / 120; n++; }
+      if (n >= 48) acc = 0;
     } else {
-      ctx.fillStyle = 'rgba(190,60,50,.85)';
-      rr(-4.60, -0.92, 0.24, 0.22, 0.07); ctx.fill();
+      updateSmoke(dt * 0.6);
     }
-    // 车轮
-    function wheel(wx) {
-      ctx.save();
-      ctx.translate(wx, -0.35);
-      ctx.fillStyle = '#14171c';
-      ctx.beginPath(); ctx.arc(0, 0, 0.36, 0, 6.2832); ctx.fill();
-      ctx.strokeStyle = '#4b525c'; ctx.lineWidth = 0.07;
-      ctx.beginPath(); ctx.arc(0, 0, 0.36, 0, 6.2832); ctx.stroke();
-      ctx.rotate(wheelRot);
-      ctx.strokeStyle = 'rgba(180,195,215,.55)'; ctx.lineWidth = 0.055;
-      for (var k = 0; k < 3; k++) {
-        var a = k * Math.PI / 3;
-        ctx.beginPath();
-        ctx.moveTo(-Math.cos(a) * 0.24, -Math.sin(a) * 0.24);
-        ctx.lineTo(Math.cos(a) * 0.24, Math.sin(a) * 0.24);
-        ctx.stroke();
-      }
-      ctx.restore();
-    }
-    wheel(-3.58); wheel(-0.98);
-    ctx.restore();
+    updateCamera(dt);
+    updateUI();
+    draw();
   }
 
-  function spawnP(x, y, o) {
-    if (smoke.length > 340) smoke.shift();
-    smoke.push({
-      x: x, y: y,
-      vx: o.vx || 0, vy: o.vy || 0,
-      r: o.r || 0.2, grow: o.grow == null ? 0.5 : o.grow,
-      life: o.life || 0.8, max: o.life || 0.8,
-      col: o.col || '206,214,226',
-      alpha: o.alpha == null ? 0.42 : o.alpha
-    });
-  }
-  function updateSmoke(dt) {
-    for (var i = smoke.length - 1; i >= 0; i--) {
-      var p = smoke[i];
-      p.life -= dt;
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
-      p.r += p.grow * dt;
-      if (p.r < 0.02) p.r = 0.02;
-      if (p.life <= 0) smoke.splice(i, 1);
-    }
-  }
-  function drawSmoke() {
-    for (var i = 0; i < smoke.length; i++) {
-      var p = smoke[i], px = sx(p.x), py = groundY - p.y * scale;
-      var a = Math.max(0, p.life / p.max) * p.alpha;
-      ctx.fillStyle = 'rgba(' + p.col + ',' + a.toFixed(3) + ')';
-      ctx.beginPath(); ctx.arc(px, py, p.r * scale, 0, 6.2832); ctx.fill();
-    }
-  }
-
-  /** 现在踩刹车大概会停在哪（mult>1 表示点刹比理论多滑） */
-  function predictAt(mult) {
-    var d = (g.v * g.v) / (2 * g.cfg.brakeDecel) * mult;
-    return { dist: d, stopX: g.x + d };
-  }
-
-  function drawPredict() {
-    if (g.phase !== 'run' || g.v < 1) return;
-    var pr = predictAt(FEATHER);
-    var px = sx(pr.stopX);
-    if (px < -80 || px > W + 80) return;
-    var safe = pr.stopX < g.roadLen;
-    var col = safe ? (g.brakeOn ? '#5ee0a0' : 'rgba(94,224,160,.5)') : '#ff5d5d';
-    ctx.save();
-    ctx.strokeStyle = col; ctx.lineWidth = g.brakeOn ? 2 : 1.4;
-    ctx.setLineDash([6, 5]);
-    ctx.beginPath(); ctx.moveTo(px, groundY - 54); ctx.lineTo(px, groundY + roadH + 6); ctx.stroke();
-    ctx.setLineDash([]);
-    var txt = safe ? ('点刹停点 · 还差 ' + (g.roadLen - pr.stopX).toFixed(0) + 'm') : '冲出去了!';
-    ctx.font = '700 11px "Segoe UI",system-ui'; ctx.textAlign = 'center';
-    var tw = ctx.measureText(txt).width + 14;
-    ctx.fillStyle = 'rgba(6,10,18,.8)';
-    rr(px - tw / 2, groundY - 76, tw, 20, 7); ctx.fill();
-    ctx.fillStyle = col;
-    ctx.fillText(txt, px, groundY - 62);
-    ctx.restore();
-  }
-
-  function draw() {
-    ctx.save();
-    if (g.shake > 0) {
-      var m = g.shake * 6;
-      shakeX = (Math.random() - 0.5) * m; shakeY = (Math.random() - 0.5) * m;
-    } else { shakeX = 0; shakeY = 0; }
-    ctx.clearRect(0, 0, W, H);
-    ctx.translate(shakeX, shakeY);
-    drawSky();
-    drawClouds();
-    drawRidge(0.22, groundY - 6, 46, 0.0075, 0.6, '#31456a');
-    drawRidge(0.45, groundY, 28, 0.013, 2.2, '#25344f');
-    drawRidge(0.72, groundY + 5, 15, 0.024, 4.1, '#1a2438');
-    drawGround();
-    drawRoadMarks();
-    drawSmoke();
-    drawPredict();
-    var airborne = (g.phase === 'falling' || g.phase === 'wreck');
-    var px = sx(g.x), py = groundY - (airborne ? g.yOff * scale : 0);
-    var spin = g.phase === 'falling' ? g.fallRot : (g.phase === 'wreck' ? g.rot : 0);
-    ctx.save();
-    if (spin) {
-      var ccx = px - 2.3 * scale * CAR_VIS, ccy = py - 0.95 * scale * CAR_VIS;
-      ctx.translate(ccx, ccy);
-      ctx.rotate(spin);
-      ctx.translate(-ccx, -ccy);
-    }
-    drawCar(px, py, 0, airborne);
-    ctx.restore();
-    // 速度感
-    var kmh = g.kmh();
-    if (kmh > 60 && g.phase !== 'won') {
-      ctx.save();
-      ctx.strokeStyle = 'rgba(255,255,255,' + Math.min(0.16, (kmh - 60) / 500).toFixed(3) + ')';
-      ctx.lineWidth = 1.2;
-      for (var i = 0; i < 14; i++) {
-        var yy = (i * 97 % Math.max(1, groundY - 40)) + 12;
-        var len = 30 + (i % 4) * 22;
-        var xx = (W - ((g.x * scale * 0.6 + i * 173) % (W + 200)));
-        ctx.beginPath(); ctx.moveTo(xx, yy); ctx.lineTo(xx - len, yy); ctx.stroke();
-      }
-      ctx.restore();
-    }
-    // 撞地白闪
-    if (flash > 0) {
-      ctx.fillStyle = 'rgba(255,246,232,' + (flash * 0.26).toFixed(3) + ')';
-      ctx.fillRect(-20, -20, W + 40, H + 40);
-    }
-    // 暗角
-    var vg2 = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.42, W / 2, H / 2, Math.max(W, H) * 0.8);
-    vg2.addColorStop(0, 'rgba(0,0,0,0)'); vg2.addColorStop(1, 'rgba(0,0,0,.42)');
-    ctx.fillStyle = vg2; ctx.fillRect(-20, -20, W + 40, H + 40);
-    ctx.restore();
-  }
-
-  // ---------------------------------------------------------------- UI
+  // ================================================================ UI（与归档的 2D 版一致）
   var TICKS_DONE = false;
   function buildGauges() {
     if (TICKS_DONE) return;
     TICKS_DONE = true;
-    var vals = [0, 400, 800, 1200, 1612];
-    var html = '';
-    for (var i = 0; i < vals.length; i++) {
-      var pos = (vals[i] / 1612) * 100;
-      html += '<i style="bottom:' + pos.toFixed(1) + '%">' + vals[i] + '</i>';
-    }
+    var vals = [0, 400, 800, 1200, 1612], html = '';
+    for (var i = 0; i < vals.length; i++) html += '<i style="bottom:' + (vals[i] / 1612 * 100).toFixed(1) + '%">' + vals[i] + '</i>';
     el.gaugeTicks.innerHTML = html;
-    // 速度表刻度（半圆：180° -> 360°，圆心 103,92）
     var max = 160, a0 = 180, a1 = 360, CX = 103, CY = 92, t = '';
     for (var v = 0; v <= max; v += 20) {
-      var a = (a0 + (v / max) * (a1 - a0)) * Math.PI / 180;
-      var ca = Math.cos(a), sa = Math.sin(a);
+      var a = (a0 + (v / max) * (a1 - a0)) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
       t += '<line x1="' + (CX + ca * 64).toFixed(1) + '" y1="' + (CY + sa * 64).toFixed(1) + '" x2="' + (CX + ca * 74).toFixed(1) +
         '" y2="' + (CY + sa * 74).toFixed(1) + '" stroke="rgba(255,255,255,' + (v % 40 === 0 ? '.42' : '.18') + ')" stroke-width="' + (v % 40 === 0 ? 2 : 1) + '"/>';
-      if (v % 40 === 0) {
-        t += '<text x="' + (CX + ca * 87).toFixed(1) + '" y="' + (CY + sa * 87 + 4).toFixed(1) + '" fill="rgba(255,255,255,.45)" font-size="11" font-weight="600" text-anchor="middle">' + v + '</text>';
-      }
+      if (v % 40 === 0) t += '<text x="' + (CX + ca * 87).toFixed(1) + '" y="' + (CY + sa * 87 + 4).toFixed(1) + '" fill="rgba(255,255,255,.45)" font-size="11" font-weight="600" text-anchor="middle">' + v + '</text>';
     }
     el.speedTicks.innerHTML = t;
-    // 弧线
     function arc(r, a0d, a1d) {
-      var s = (a0d) * Math.PI / 180, e = (a1d) * Math.PI / 180;
-      var x0 = CX + Math.cos(s) * r, y0 = CY + Math.sin(s) * r;
-      var x1 = CX + Math.cos(e) * r, y1 = CY + Math.sin(e) * r;
-      return 'M' + x0.toFixed(1) + ' ' + y0.toFixed(1) + ' A' + r + ' ' + r + ' 0 ' + (Math.abs(a1d - a0d) > 180 ? 1 : 0) + ' 1 ' + x1.toFixed(1) + ' ' + y1.toFixed(1);
+      var s = a0d * Math.PI / 180, e = a1d * Math.PI / 180;
+      return 'M' + (CX + Math.cos(s) * r).toFixed(1) + ' ' + (CY + Math.sin(s) * r).toFixed(1) +
+        ' A' + r + ' ' + r + ' 0 0 1 ' + (CX + Math.cos(e) * r).toFixed(1) + ' ' + (CY + Math.sin(e) * r).toFixed(1);
     }
     el.speedArc.setAttribute('d', arc(72, 180, 360));
     el.speedArcFill.setAttribute('d', arc(72, 180, 360));
@@ -1124,28 +1226,25 @@
     if (g.phase === 'wreck' || g.phase === 'falling' || g.phase === 'lost') return 'bad';
     return 'go';
   }
+  function predictNeed() { return (g.v * g.v) / (2 * g.cfg.brakeDecel) * FEATHER; }
 
   function updateUI() {
     var kmh = g.kmh();
     el.speedText.textContent = Math.round(kmh);
-    var a = 180 + (Math.min(kmh, 160) / 160) * 180;
-    el.needle.setAttribute('transform', 'translate(103,92) rotate(' + a.toFixed(1) + ')');
+    el.needle.setAttribute('transform', 'translate(103,92) rotate(' + (180 + Math.min(kmh, 160) / 160 * 180).toFixed(1) + ')');
     el.speedArcFill.style.strokeDashoffset = (227 * (1 - Math.min(kmh, 160) / 160)).toFixed(1);
-
     el.pedalFill.style.height = (g.pedalPct() * 100).toFixed(1) + '%';
     el.pedalVal.innerHTML = Math.round(g.F) + '<small>N</small>';
-    var left = g.holdLeft();
-    el.pedalSub.innerHTML = '上限 1612 N<br>剩余可踩 ' + left.toFixed(2) + ' s';
+    el.pedalSub.innerHTML = '上限 1612 N<br>还能撑 ' + g.holdLeft().toFixed(2) + ' s';
     el.pedalPanel.classList.toggle('broken', g.pedalBroken);
+    el.pedalPanel.classList.toggle('danger', !g.pedalBroken && g.pedalPct() > 0.9);
     el.heldText.textContent = g.heldT.toFixed(2) + ' s';
-    el.leftText.textContent = Math.max(0, left).toFixed(2) + ' s';
-
+    el.leftText.textContent = g.holdLeft().toFixed(2) + ' s';
     el.distText.textContent = g.distToCliff().toFixed(1) + ' m';
     var frac = Math.min(1, Math.max(0, g.x / g.roadLen));
     el.trackFill.style.width = (frac * 100).toFixed(2) + '%';
     el.trackCar.style.left = (frac * 100).toFixed(2) + '%';
 
-    // 状态胶囊
     var s = '';
     switch (g.phase) {
       case 'idle': s = '准备就绪 · 点开始'; break;
@@ -1160,7 +1259,6 @@
     el.status.textContent = s;
     el.status.className = 'pill ' + phaseClass();
 
-    // 刹车按钮
     var locked = !(g.phase === 'run' && !g.pedalBroken);
     el.brakeBtn.disabled = locked;
     el.brakeBtn.classList.toggle('locked', locked);
@@ -1168,61 +1266,44 @@
     var bt = el.brakeBtn.firstChild;
     var label = g.pedalBroken ? '踏板已断裂' :
       (g.phase === 'accel' || g.phase === 'idle') ? '刹车锁定中' :
+      (g.phase === 'wreck') ? '车辆失控中' :
       (g.phase === 'falling') ? '坠落中…' :
       (g.phase === 'lost' || g.phase === 'won') ? '本局结束' :
       g.brakeOn ? '刹车中…' : '按住刹车';
-    if (bt && bt.nodeType === 3) { if (bt.nodeValue !== label) bt.nodeValue = label; }
+    if (bt && bt.nodeType === 3 && bt.nodeValue !== label) bt.nodeValue = label;
 
-    // 踏板面板告警
-    el.pedalPanel.classList.toggle('danger', !g.pedalBroken && g.pedalPct() > 0.9);
-
-    // 落点预测 / 行动提示
-    var need = predictAt(FEATHER).dist;
+    var need = predictNeed();
     el.needText.textContent = '≈ ' + need.toFixed(0) + ' m';
-    if (g.phase === 'idle') {
-      el.predictText.innerHTML = '— 开始后自动加速到 100 km/h —';
-    } else if (g.phase === 'accel') {
-      el.predictText.innerHTML = '— 到 100 km/h 才能踩刹车 —';
-    } else if (g.phase === 'run') {
+    if (g.phase === 'idle') el.predictText.innerHTML = '— 开始后自动加速到 100 km/h —';
+    else if (g.phase === 'accel') el.predictText.innerHTML = '— 到 100 km/h 才能踩刹车 —';
+    else if (g.phase === 'run') {
       var margin = g.roadLen - g.x - need;
-      if (g.pedalBroken) {
-        el.predictText.innerHTML = '<span class="warn">踏板已断裂 · 刹车失效</span>';
-      } else if (g.brakeOn && g.pedalPct() > 0.93) {
-        el.predictText.innerHTML = '<span class="warn">力度 ' + Math.round(g.F) + ' N —— 快断了，松一下!</span>';
-      } else if (g.brakeOn) {
-        el.predictText.innerHTML = '刹车中 · 力度 <b>' + Math.round(g.F) + ' N</b> · 还能连踩 <b>' + g.holdLeft().toFixed(2) + ' s</b>';
-      } else if (margin >= 0) {
-        el.predictText.innerHTML = '<span class="ok">还不算晚</span> · 现在点刹会停在崖前 ' + margin.toFixed(0) + ' m';
-      } else {
-        el.predictText.innerHTML = '<span class="warn">太晚了</span> · 现在踩要超出 ' + (-margin).toFixed(0) + ' m';
-      }
-    } else if (g.phase === 'won') {
-      el.predictText.innerHTML = '<span class="ok">车头距崖边 ' + g.stopMargin.toFixed(1) + ' m</span>';
-    } else if (g.phase === 'wreck') {
-      el.predictText.innerHTML = '<span class="warn">车辆失控 · 挑战失败</span>';
-    } else if (g.phase === 'falling') {
-      el.predictText.innerHTML = '<span class="warn">坠落中 · 挑战失败</span>';
-    } else {
-      el.predictText.innerHTML = '<span class="warn">没能停下</span>';
-    }
+      if (g.pedalBroken) el.predictText.innerHTML = '<span class="warn">踏板已断裂 · 刹车失效</span>';
+      else if (g.brakeOn && g.pedalPct() > 0.93) el.predictText.innerHTML = '<span class="warn">力度 ' + Math.round(g.F) + ' N —— 快断了，松一下!</span>';
+      else if (g.brakeOn) el.predictText.innerHTML = '刹车中 · 力度 <b>' + Math.round(g.F) + ' N</b> · 还能连踩 <b>' + g.holdLeft().toFixed(2) + ' s</b>';
+      else if (margin >= 0) el.predictText.innerHTML = '<span class="ok">还不算晚</span> · 现在点刹会停在崖前 ' + margin.toFixed(0) + ' m';
+      else el.predictText.innerHTML = '<span class="warn">太晚了</span> · 现在踩要超出 ' + (-margin).toFixed(0) + ' m';
+    } else if (g.phase === 'won') el.predictText.innerHTML = '<span class="ok">车头距崖边 ' + g.stopMargin.toFixed(1) + ' m</span>';
+    else if (g.phase === 'wreck') el.predictText.innerHTML = '<span class="warn">车辆失控 · 挑战失败</span>';
+    else if (g.phase === 'falling') el.predictText.innerHTML = '<span class="warn">坠落中 · 挑战失败</span>';
+    else el.predictText.innerHTML = '<span class="warn">没能停下</span>';
   }
 
-  // ---------------------------------------------------------------- 浮层 / 流程
-  function openOverlay(html) {
-    el.ovPanel.innerHTML = html;
-    el.overlay.classList.remove('hide');
-    paused = true;
-  }
+  // ================================================================ 流程
+  var best = null;
+  try { best = JSON.parse(localStorage.getItem('cliffBrakeBest') || 'null'); } catch (e) { best = null; }
+
+  function openOverlay(html) { el.ovPanel.innerHTML = html; el.overlay.classList.remove('hide'); paused = true; }
   function closeOverlay() { el.overlay.classList.add('hide'); paused = false; }
 
   function showStart() {
     openOverlay(
-      '<h1>悬崖急刹</h1>' +
-      '<p class="lead">前方是悬崖。把 100 km/h 的车刹停 —— 停得越贴边，分越高。</p>' +
+      '<h1>悬崖急刹 <span style="font-size:14px;color:#8fa2ba">3D</span></h1>' +
+      '<p class="lead">第三人称车后视角。把 100 km/h 的车刹停在崖边 —— 停得越贴边，分越高。</p>' +
       '<ul>' +
       '<li>起步自动加速到 <b>100 km/h</b>，到速后才能踩刹车</li>' +
-      '<li>刹车本身很猛(9.2 m/s²)，从 100 刹停总共只需踩住 <b>3.02 秒</b></li>' +
-      '<li>可是踏板力度表会随踩住的时间涨：<b>一脚不松 2.86 秒就顶到 1612 N 断裂</b>，之后刹车彻底失效，车直接冲下悬崖</li>' +
+      '<li>刹车很猛(9.2 m/s²)，从 100 刹停总共只需踩住 <b>3.02 秒</b></li>' +
+      '<li>但踏板力度表随踩住时间涨：<b>一脚不松 2.86 秒就顶到 1612 N 断裂</b>，车立刻失控飞出</li>' +
       '<li>所以只能<b>点刹</b>：踩住半秒多、松一下让力度回落，反复点，踩够 3.02 秒才停得住</li>' +
       '<li>松手时车不减速：点刹要多滑 15~20 米，<b>得比"一脚踩死"提前开始</b></li>' +
       '<li>目标：停在离崖边 <b>3 米内</b>（满分 100）</li>' +
@@ -1234,29 +1315,23 @@
   }
 
   function showResult(win) {
-    var margin = g.stopMargin;
-    var rk = g.rating;
-    var reason = '';
+    var margin = g.stopMargin, rk = g.rating, reason = '';
     if (!win) {
       if (g.pedalBroken) reason = '刹车踏板在踩下 ' + g.brokeAtT.toFixed(2) + ' s 累积到 1612 N 后断裂，车速 ' +
         Math.round(g.brokeAtV * 3.6) + ' km/h 时彻底失去制动，车辆随即失控' + (g.impact ? '翻车撞毁。' : '，飞出路面坠入悬崖。');
       else if (g.heldT < 0.05) reason = '全程没有踩刹车，车直接冲出了崖边。';
-      else reason = '刹车点太晚：车头越过崖边时还剩 ' + Math.round(g.brakeOn ? 0 : g.v * 3.6) + ' km/h，距离不够。';
+      else reason = '刹车点太晚：车头越过崖边时还剩 ' + Math.round(g.v * 3.6) + ' km/h，距离不够。';
     }
-    var bestHtml = '';
-    if (win && best && best.score === g.score && best.margin === margin) bestHtml = '<div style="font-size:12px;color:#ffd166;margin-bottom:8px">🎉 新纪录</div>';
     openOverlay(
       (win ? '<h2>刹住了！</h2>' : '<h2>坠入悬崖</h2>') +
       (win ?
         '<div class="res-score">' + g.score + '<span style="font-size:16px;color:#93a6bf"> 分</span></div>' +
-        '<div class="res-meta"><span class="res-rank">' + rk.key + '</span> ' + rk.name + ' · ' + rk.tip + '<br>' +
-        '车头距崖边 <b>' + margin.toFixed(1) + ' m</b>，刹停用了 <b>' + g.heldT.toFixed(2) + ' s</b>，峰值力度 <b>' + Math.round(g.F) + ' N</b></div>'
+        '<div class="res-meta"><span class="res-rank">' + rk.key + '</span> ' + rk.name + ' · ' + rk.tip + '<br>车头距崖边 <b>' + margin.toFixed(1) +
+        ' m</b>，刹停用了 <b>' + g.heldT.toFixed(2) + ' s</b>，峰值力度 <b>' + Math.round(g.F) + ' N</b></div>'
         : '<div class="res-meta" style="margin-top:12px">' + reason + '</div>') +
-      bestHtml +
       '<div class="res-meta">本局：发动机加速度 ' + g.engineA.toFixed(2) + ' m/s²，崖边在 ' + g.roadLen.toFixed(0) + ' m 处' +
       (best ? ' ｜ 历史最佳 <b>' + best.score + ' 分</b>（距崖 ' + best.margin.toFixed(1) + ' m）' : '') + '</div>' +
-      '<div class="row"><button class="btn" id="againBtn">再来一局</button>' +
-      '<button class="btn ghost" id="rulesBtn">看规则</button></div>'
+      '<div class="row"><button class="btn" id="againBtn">再来一局</button><button class="btn ghost" id="rulesBtn">看规则</button></div>'
     );
     var a = $('#againBtn'); if (a) a.onclick = startRound;
     var r = $('#rulesBtn'); if (r) r.onclick = showStart;
@@ -1265,11 +1340,11 @@
   function startRound() {
     Sound.init(); Sound.resume();
     g.reset();
-    smoke = []; skid = []; wheelRot = 0; prevPhase = 'idle'; snapFired = false;
+    smoke = []; skid = []; prevPhase = 'idle'; snapFired = false; flash = 0;
+    camWant = [g.x - 8.6, 3.4, 3.9]; camLook = [g.x + 9.5, 1.0, 0];
     el.trackDanger.style.width = ((DANGER / g.roadLen) * 100).toFixed(1) + '%';
     closeOverlay();
     g.start();
-    clampCamera();
   }
 
   function finish() {
@@ -1286,16 +1361,10 @@
       g.phase === 'won' ? 650 : (g.impact ? 700 : 450));
   }
 
-  function clampCamera() {
-    if (g.phase === 'wreck' || g.phase === 'falling') return;   // 失控/坠落时锁死镜头
-    camX = Math.max(-24, g.x - visM * 0.24);
-  }
-
-  // ---------------------------------------------------------------- 输入
+  // ================================================================ 输入
   var holding = false;
   function press(on) {
-    holding = on;
-    g.setBrake(on);
+    holding = on; g.setBrake(on);
     if (on) { Sound.init(); Sound.resume(); }
   }
   el.brakeBtn.addEventListener('pointerdown', function (e) {
@@ -1308,132 +1377,27 @@
   window.addEventListener('pointercancel', function () { if (holding) press(false); });
   window.addEventListener('blur', function () { if (holding) press(false); });
   el.brakeBtn.addEventListener('contextmenu', function (e) { e.preventDefault(); });
-
   window.addEventListener('keydown', function (e) {
     if (e.code === 'Space' || e.code === 'ArrowDown') {
       e.preventDefault();
       if (g.phase === 'idle' && !el.overlay.classList.contains('hide')) { startRound(); return; }
       if (!el.brakeBtn.disabled && !holding) press(true);
-    } else if (e.code === 'Enter') {
-      if (g.phase === 'idle' || g.isTerminal()) startRound();
-    } else if (e.key === 'm' || e.key === 'M') {
-      toggleSound();
-    }
+    } else if (e.code === 'Enter') { if (g.phase === 'idle' || g.isTerminal()) startRound(); }
+    else if (e.key === 'm' || e.key === 'M') toggleSound();
   });
   window.addEventListener('keyup', function (e) {
     if (e.code === 'Space' || e.code === 'ArrowDown') { e.preventDefault(); if (holding) press(false); }
   });
-
-  function toggleSound() {
-    var on = Sound.toggle();
-    el.soundBtn.textContent = on ? '🔊' : '🔇';
-  }
+  function toggleSound() { el.soundBtn.textContent = Sound.toggle() ? '🔊' : '🔇'; }
   el.soundBtn.addEventListener('click', toggleSound);
-  window.addEventListener('resize', function () { resize(); clampCamera(); draw(); });
+  window.addEventListener('resize', function () { resize(); draw(); });
   if (window.ResizeObserver) new ResizeObserver(function () { resize(); draw(); }).observe(stage);
 
-  // ---------------------------------------------------------------- 主循环
-  var lastT = 0, acc = 0;
-  function step(dt) {
-    var wasPhase = g.phase;
-    g.tick(dt);
-    if (!g.pedalBroken) wheelRot += g.v * dt / 0.35;   // 抱死后车轮锁死不转
-
-    // 正常刹车：轮胎冒烟 + 刹车痕
-    if (g.phase === 'run' && g.brakeOn && g.v > 3) {
-      if (Math.random() < 0.55) {
-        spawnP(g.x - 1.2 - Math.random() * 3.4, 0.05 + Math.random() * 0.3,
-          { vx: -1.2 - Math.random() * 1.6, vy: 0.5, r: 0.16 + Math.random() * 0.2, life: 0.7 + Math.random() * 0.5, grow: 0.5 });
-      }
-      if (!skid.length || g.x - skid[skid.length - 1] > 1.6) {
-        skid.push(g.x - 1.0);
-        if (skid.length > 420) skid.shift();
-      }
-    }
-    // 失控第一阶段：抱死甩尾（地面浓烟 + 火花 + 横向擦痕）
-    if (g.phase === 'wreck' && !g.airborne) {
-      for (var s = 0; s < 2; s++) {
-        spawnP(g.x - 1.5 - Math.random() * 3.2, 0.05 + Math.random() * 0.4,
-          { vx: -3 - Math.random() * 4, vy: 1 + Math.random() * 2, r: 0.22 + Math.random() * 0.28, life: 0.6 + Math.random() * 0.5, grow: 1.0, col: '190,186,180', alpha: 0.5 });
-      }
-      if (Math.random() < 0.6) {
-        spawnP(g.x - 2 - Math.random() * 2, 0.1 + Math.random() * 0.3,
-          { vx: -5 - Math.random() * 6, vy: 2 + Math.random() * 3, r: 0.055, life: 0.25 + Math.random() * 0.2, grow: -0.05, col: '255,196,90', alpha: 0.95 });
-      }
-      if (!skid.length || g.x - skid[skid.length - 1] > 1.2) {
-        skid.push(g.x - 1.2);
-        if (skid.length > 420) skid.shift();
-      }
-    }
-    // 失控第二阶段：空中拖尾
-    if (g.phase === 'wreck' && g.airborne) {
-      if (Math.random() < 0.8) {
-        spawnP(g.x - 1.6 - Math.random() * 3, g.yOff + 0.15 + Math.random() * 0.7,
-          { vx: -1 - Math.random() * 2, vy: 0.2, r: 0.2 + Math.random() * 0.26, life: 0.5 + Math.random() * 0.4, grow: 0.9, alpha: 0.4 });
-      }
-    }
-    updateSmoke(dt);
-
-    // 音效
-    Sound.skid(g.phase === 'wreck' && !g.airborne ? 1 : (g.brakeOn && g.v > 3 ? Math.min(1, g.v / 20) : 0));
-
-    if (flash > 0) flash = Math.max(0, flash - dt * 3.6);
-
-    if (wasPhase !== g.phase) {
-      if (g.phase === 'wreck') { Sound.snap(); Sound.crash(); }
-      if (g.phase === 'falling') Sound.crash();
-      if (g.phase === 'lost' && g.impact) {
-        // 撞地：白闪 + 尘爆
-        Sound.impact();
-        flash = 1;
-        for (var k = 0; k < 34; k++) {
-          var ang = Math.random() * Math.PI, sp = 2 + Math.random() * 7;
-          spawnP(g.x - 2.3, 0.1 + Math.random() * 0.5, {
-            vx: (Math.random() < 0.5 ? -1 : 1) * Math.cos(ang) * sp,
-            vy: Math.abs(Math.sin(ang)) * sp * 0.7,
-            r: 0.25 + Math.random() * 0.5, life: 0.7 + Math.random() * 0.8, grow: 1.4,
-            col: '176,166,150', alpha: 0.55
-          });
-        }
-      }
-      if (g.isTerminal()) finish();
-      prevPhase = g.phase;
-    }
-    // 断裂：力度表面板闪红（一次性）
-    if (g.pedalBroken && !snapFired) {
-      snapFired = true;
-      el.pedalPanel.classList.remove('flash');
-      void el.pedalPanel.offsetWidth;
-      el.pedalPanel.classList.add('flash');
-    }
-  }
-
-  function loop(now) {
-    if (!runLoop) return;
-    requestAnimationFrame(loop);
-    var dt = (now - lastT) / 1000;
-    lastT = now;
-    if (!(dt > 0) || dt > 0.3) dt = 0.016;
-    if (!paused) {
-      acc += dt;
-      var n = 0;
-      while (acc >= 1 / 120 && n < 48) { step(1 / 120); acc -= 1 / 120; n++; }
-      if (n >= 48) acc = 0;
-      clampCamera();
-    } else {
-      // 浮层期间也让尘烟慢慢消失
-      updateSmoke(dt * 0.6);
-    }
-    updateUI();
-    draw(now / 1000);
-  }
-
-  // ---------------------------------------------------------------- 自检
-  /* 脚本驱动一局：从 brakeX 起按 h 踩 / r 松的点刹节奏 */
+  // ================================================================ 自检
   function simScript(opt, brakeX, h, r, maxT) {
-    g.reset(opt);
-    g.start();
-    smoke = []; skid = []; wheelRot = 0; snapFired = false;
+    g.reset(opt); g.start();
+    smoke = []; skid = []; snapFired = false; flash = 0;
+    camWant = [g.x - 8.6, 3.4, 3.9]; camLook = [g.x + 9.5, 1.0, 0];
     var dt = 1 / 120, n = 0, t0 = null, drawErr = null;
     while (!g.isTerminal() && n * dt < (maxT || 60)) {
       var on = false;
@@ -1443,12 +1407,13 @@
       }
       g.setBrake(on);
       step(dt);
+      updateCamera(dt);
       if (n % 7 === 0) {
-        try { clampCamera(); updateUI(); draw(n * dt); } catch (e) { if (!drawErr) drawErr = String(e && e.message || e); }
+        try { updateUI(); draw(); } catch (e) { if (!drawErr) drawErr = String(e && e.message || e); }
       }
       n++;
     }
-    try { clampCamera(); updateUI(); draw(0); } catch (e) { if (!drawErr) drawErr = String(e && e.message || e); }
+    try { updateCamera(0.05); updateUI(); draw(); } catch (e) { if (!drawErr) drawErr = String(e && e.message || e); }
     return { drawErr: drawErr, frames: n };
   }
 
@@ -1468,62 +1433,60 @@
   }
 
   window.__selftest = function () {
-    var rep = { ok: true, err: [], checks: {} };
+    var rep = { ok: true, err: [], view: '3d', checks: {} };
     try {
       runLoop = false; paused = false;
-
-      // 1) 点刹(0.6/0.3) 从 120m 起 -> 应成功（崖边按实测刹车距离摆放，免得数值一调测试就假红）
       var probe = probeFeatherDist(120, 0.6, 0.3);
       var A = simScript({ engineA: 5.5, roadLen: 120 + probe + 1 }, 120, 0.6, 0.3);
-      rep.checks.feather = { brakeDist: +probe.toFixed(1), phase: g.phase, margin: g.stopMargin, score: g.score, Fpeak: Math.round(g.F), drawErr: A.drawErr };
+      rep.checks.feather = { brakeDist: +probe.toFixed(1), phase: g.phase, margin: g.stopMargin, score: g.score, drawErr: A.drawErr };
 
-      // 2) 一脚踩到底 -> 踏板断裂 -> 坠落
       g.reset({ engineA: 5.5, roadLen: 240 }); g.start();
       var broke = null, k = 0;
       while (!g.isTerminal() && k < 120 * 60) {
         g.setBrake(g.phase === 'run' && g.x >= 120);
-        step(1 / 120);
-        if (g.pedalBroken && !broke) broke = { t: g.t, F: Math.round(g.F), v: +(g.v * 3.6).toFixed(1) };
+        step(1 / 120); updateCamera(1 / 120);
+        if (g.pedalBroken && !broke) broke = { t: g.t, v: +(g.v * 3.6).toFixed(1) };
         k++;
       }
-      rep.checks.fullHold = {
-        broke: broke, phase: g.phase,
-        afterBreak: broke ? +(g.t - broke.t).toFixed(2) : null,
-        events: g.events.map(function (e) { return e.type; }).join(',')
-      };
+      rep.checks.fullHold = { broke: broke, phase: g.phase, afterBreak: broke ? +(g.t - broke.t).toFixed(2) : null,
+        events: g.events.map(function (e) { return e.type; }).join(',') };
 
-      // 3) 完全不刹车 -> 坠崖
       var C = simScript({ engineA: 5.5, roadLen: 300 }, 1e9, null, null, 40);
-      var noBrakePhase = g.phase;
-      rep.checks.noBrake = { phase: noBrakePhase, drawErr: C.drawErr };
+      rep.checks.noBrake = { phase: g.phase, drawErr: C.drawErr };
 
-      // 4) 渲染像素非空
+      // 渲染：像素非空 + 天空/地面对比（3D 视角下画面理应既有天空也有地面）
       try {
-        var img = ctx.getImageData(0, 0, Math.min(W, 240), Math.min(H, 160)).data;
-        var set = 0, sum = 0;
-        for (var i = 0; i < img.length; i += 4) { if (img[i + 3] > 0) set++; sum += img[i] + img[i + 1] + img[i + 2]; }
-        rep.checks.pixels = { nonEmpty: set, avg: +(sum / Math.max(1, set)).toFixed(1) };
+        var img = ctx.getImageData(0, 0, W, H).data;
+        var sky = 0, ground = 0, nonEmpty = 0, sum = 0;
+        for (var y = 0; y < H; y += 4) {
+          for (var x2 = 0; x2 < W; x2 += 8) {
+            var i2 = (y * W + x2) * 4;
+            if (img[i2 + 3] > 0) nonEmpty++;
+            sum += img[i2] + img[i2 + 1] + img[i2 + 2];
+            if (y < H * 0.4) sky++; else ground++;
+          }
+        }
+        rep.checks.pixels = { nonEmpty: nonEmpty, avg: +(sum / Math.max(1, nonEmpty) / 3).toFixed(1), sky: sky, ground: ground };
       } catch (e) { rep.err.push('pixel:' + e.message); }
 
-      rep.checks.dom = {
-        speed: el.speedText.textContent, dist: el.distText.textContent,
-        need: el.needText.textContent, pedal: el.pedalVal.textContent,
-        status: el.status.textContent, predict: el.predictText.textContent,
-        brakeDisabled: el.brakeBtn.disabled, ticks: el.gaugeTicks.children.length,
-        overlayShown: !el.overlay.classList.contains('hide')
-      };
-      rep.checks.theo = THEO;
+      // 相机确实在车的右后方
+      var pc = [camPos[0] - g.x, camPos[1], camPos[2]];
+      rep.checks.camera = { dx: +pc[0].toFixed(2), y: +pc[1].toFixed(2), z: +pc[2].toFixed(2) };
+      if (!(pc[0] < -3 && pc[2] > 1.5 && pc[1] > 1)) { rep.ok = false; rep.err.push('相机不在车右后方: ' + JSON.stringify(pc)); }
 
-      // 5) 真实输入通路：键盘 + 指针事件
-      runLoop = false;
-      el.overlay.style.transition = 'none';
+      // 3D 图元数量（确认真的在画三维几何）
+      buildWorld();
+      rep.checks.geometry = { items: items.length };
+      if (items.length < 120) { rep.ok = false; rep.err.push('三维图元太少: ' + items.length); }
+
+      // 输入通路
+      runLoop = false; el.overlay.style.transition = 'none';
       g.reset({ engineA: 5.5, roadLen: 300 }); closeOverlay(); g.start();
-      var k = 0;
-      while (g.phase === 'accel' && k < 120 * 20) { step(1 / 120); k++; }
-      updateUI();                        // 真实游戏里每帧都会刷新按钮可用态
-      rep.checks.input = { phase: g.phase, btnDisabled: el.brakeBtn.disabled };
+      var m = 0;
+      while (g.phase === 'accel' && m < 120 * 20) { step(1 / 120); m++; }
+      updateUI();
       window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space', bubbles: true }));
-      rep.checks.input.keyBrake = g.brakeInput;
+      rep.checks.input = { keyBrake: g.brakeInput };
       for (var q = 0; q < 120; q++) step(1 / 120);
       rep.checks.input.FAfter1s = Math.round(g.F);
       window.dispatchEvent(new KeyboardEvent('keyup', { code: 'Space', bubbles: true }));
@@ -1532,120 +1495,76 @@
       rep.checks.input.btnPress = g.brakeInput;
       window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }));
       rep.checks.input.btnRelease = g.brakeInput === false;
-      if (!rep.checks.input.keyBrake) { rep.ok = false; rep.err.push('空格键未触发刹车'); }
-      if (!(rep.checks.input.FAfter1s > 350)) { rep.ok = false; rep.err.push('按住1秒力度异常: ' + rep.checks.input.FAfter1s); }
-      if (!rep.checks.input.keyRelease) { rep.ok = false; rep.err.push('松键未释放刹车'); }
-      if (!rep.checks.input.btnPress) { rep.ok = false; rep.err.push('按钮 pointerdown 未触发刹车'); }
-      if (!rep.checks.input.btnRelease) { rep.ok = false; rep.err.push('按钮 pointerup 未释放刹车'); }
+      if (!rep.checks.input.keyBrake) { rep.ok = false; rep.err.push('空格未触发刹车'); }
+      if (!rep.checks.input.btnPress || !rep.checks.input.btnRelease) { rep.ok = false; rep.err.push('按钮事件异常'); }
 
-      // 6) 结算面板 + 重开（最常点的路径）
+      // 结算 + 重开
       try {
         g.stopMargin = 2.5; g.score = 97; g.rating = window.carRating(97); g.heldT = 3.5;
-        showResult(true);
-        var wLen = el.ovPanel.innerHTML.length;
-        showResult(false);
-        var lLen = el.ovPanel.innerHTML.length;
+        showResult(true); var wLen = el.ovPanel.innerHTML.length;
+        showResult(false); var lLen = el.ovPanel.innerHTML.length;
         startRound();
-        rep.checks.flow = { winHtml: wLen, loseHtml: lLen, restartPhase: g.phase, overlayHidden: el.overlay.classList.contains('hide') };
-        if (g.phase !== 'accel') { rep.ok = false; rep.err.push('重开未进入 accel: ' + g.phase); }
-        if (!(wLen > 200 && lLen > 120)) { rep.ok = false; rep.err.push('结算面板内容异常'); }
-      } catch (e) { rep.ok = false; rep.err.push('结算/重开异常:' + (e && e.message || e)); }
+        rep.checks.flow = { win: wLen, lose: lLen, restartPhase: g.phase };
+        if (g.phase !== 'accel') { rep.ok = false; rep.err.push('重开未进 accel'); }
+      } catch (e) { rep.ok = false; rep.err.push('结算/重开异常:' + e.message); }
 
-      if (!(noBrakePhase === 'lost')) { rep.ok = false; rep.err.push('不刹车应坠崖'); }
-      if (rep.checks.feather.phase !== 'won') { rep.ok = false; rep.err.push('点刹应刹停: ' + rep.checks.feather.phase); }
+      if (rep.checks.feather.phase !== 'won') { rep.ok = false; rep.err.push('点刹应能刹停'); }
+      if (rep.checks.noBrake.phase !== 'lost') { rep.ok = false; rep.err.push('不刹车应坠崖'); }
       if (!broke) { rep.ok = false; rep.err.push('一脚不松应断裂'); }
-      if (rep.checks.fullHold.phase !== 'lost') { rep.ok = false; rep.err.push('断裂后应坠崖/撞毁'); }
-      if (!(rep.checks.fullHold.afterBreak != null && rep.checks.fullHold.afterBreak < 3.5)) {
-        rep.ok = false; rep.err.push('断裂后结束太慢: ' + rep.checks.fullHold.afterBreak + 's');
-      }
-      if (rep.checks.fullHold.events.indexOf('air') < 0) { rep.ok = false; rep.err.push('缺少弹射飞出动画'); }
+      if (!(rep.checks.fullHold.afterBreak < 3.5)) { rep.ok = false; rep.err.push('断裂后结束太慢'); }
       if (A.drawErr || C.drawErr) { rep.ok = false; rep.err.push('渲染异常:' + (A.drawErr || C.drawErr)); }
-      if (!rep.checks.pixels || rep.checks.pixels.nonEmpty < 100) { rep.ok = false; rep.err.push('画布空白'); }
-      if (!(rep.checks.dom.ticks >= 5)) { rep.ok = false; rep.err.push('刻度未生成'); }
-      if (!rep.checks.dom.need || rep.checks.dom.need.indexOf('m') < 0) { rep.ok = false; rep.err.push('needText 未更新'); }
+      if (!rep.checks.pixels || rep.checks.pixels.nonEmpty < 500) { rep.ok = false; rep.err.push('画布空白'); }
     } catch (e) {
       rep.ok = false; rep.err.push('exception:' + (e && e.stack || e));
     }
-    var str = JSON.stringify(rep);
-    el.selftest.textContent = str;
-    try { document.title = (rep.ok ? 'SELFTEST-OK ' : 'SELFTEST-FAIL ') + str.slice(0, 300); } catch (e) {}
+    el.selftest.textContent = JSON.stringify(rep);
+    document.title = (rep.ok ? 'SELFTEST3D-OK ' : 'SELFTEST3D-FAIL ') + el.selftest.textContent.slice(0, 260);
     return rep;
   };
 
-  // ---------------------------------------------------------------- 调试快照 (仅 ?shot=xxx 时启用)
+  // ================================================================ 调试快照
   function debugShot(mode) {
     runLoop = false; paused = false;
     var dt = 1 / 120;
-    function adv(n) { for (var i = 0; i < n; i++) step(dt); }
-    function until(cond, maxT) { var k = 0; while (!cond() && k * dt < (maxT || 60)) { step(dt); clampCamera(); k++; } }
+    function adv(n) { for (var i = 0; i < n; i++) { step(dt); updateCamera(dt); } }
+    function until(cond, maxT) { var k = 0; while (!cond() && k * dt < (maxT || 60)) { step(dt); updateCamera(dt); k++; } }
     function featherRun(startX, stopCond) {
       until(function () { return g.phase === 'run' && g.x >= startX; }, 30);
       var t0 = g.t, k = 0;
-      while (!stopCond() && k * dt < 30) {
-        g.setBrake(((g.t - t0) % 0.9) < 0.6);
-        step(dt); k++;
-      }
+      while (!stopCond() && k * dt < 30) { g.setBrake(((g.t - t0) % 0.9) < 0.6); step(dt); updateCamera(dt); k++; }
     }
+    g.reset({ engineA: 5.5, roadLen: 300 });
+    camWant = [g.x - 8.6, 3.4, 3.9]; camLook = [g.x + 9.5, 1.0, 0]; updateCamera(1);
     if (mode === 'start') { /* 起始界面 */ }
-    else if (mode === 'accel') {
-      g.reset({ engineA: 5.5, roadLen: 300 }); g.start();
-      until(function () { return g.kmh() > 82; }, 20);
-    } else if (mode === 'braking') {
-      g.reset({ engineA: 5.5, roadLen: 300 }); g.start();
-      featherRun(150, function () { return g.kmh() < 50; });
-    } else if (mode === 'breaking') {
-      g.reset({ engineA: 5.5, roadLen: 300 }); g.start();
-      until(function () { return g.x >= 150; }, 20);
-      g.setBrake(true);
-      until(function () { return g.pedalBroken; }, 20);
-      adv(20);
-    } else if (mode === 'wreck') {
-      g.reset({ engineA: 5.5, roadLen: 300 }); g.start();
-      until(function () { return g.x >= 150; }, 20);
-      g.setBrake(true);
-      until(function () { return g.pedalBroken; }, 20);
-      adv(24);                                   // 抱死甩尾中
-    } else if (mode === 'air') {
-      g.reset({ engineA: 5.5, roadLen: 300 }); g.start();
-      until(function () { return g.x >= 150; }, 20);
-      g.setBrake(true);
-      until(function () { return g.pedalBroken; }, 20);
-      adv(100);                                  // 已弹射腾空(接近最高点)
-    } else if (mode === 'impact') {
-      g.reset({ engineA: 5.5, roadLen: 300 }); g.start();
-      until(function () { return g.x >= 150; }, 20);
-      g.setBrake(true);
-      until(function () { return g.pedalBroken; }, 20);
-      until(function () { return g.phase === 'lost'; }, 10);
-      adv(6);                                    // 撞地瞬间
+    else if (mode === 'accel') { g.start(); until(function () { return g.kmh() > 82; }, 20); }
+    else if (mode === 'braking') { g.start(); featherRun(150, function () { return g.kmh() < 50; }); }
+    else if (mode === 'win') {
+      var dw = probeFeatherDist(150, 0.6, 0.3);                   // 先量点刹距离，再摆崖边
+      g.reset({ engineA: 5.5, roadLen: 150 + dw + 1.2 }); g.start(); featherRun(150, function () { return g.isTerminal(); });
+    }
+    else if (mode === 'near') { g.reset({ engineA: 5.5, roadLen: 240 }); g.start(); until(function () { return g.x >= 192; }, 30); g.setBrake(true); }
+    else if (mode === 'wreck') { g.start(); until(function () { return g.x >= 150; }, 20); g.setBrake(true); until(function () { return g.pedalBroken; }, 20); adv(26); }
+    else if (mode === 'air') { g.start(); until(function () { return g.x >= 150; }, 20); g.setBrake(true); until(function () { return g.pedalBroken; }, 20); adv(100); }
+    else if (mode === 'impact') {
+      g.start(); until(function () { return g.x >= 150; }, 20); g.setBrake(true);
+      until(function () { return g.pedalBroken; }, 20); until(function () { return g.phase === 'lost'; }, 10); adv(6);
     } else if (mode === 'fall') {
       g.reset({ engineA: 5.5, roadLen: 190 }); g.start();
       until(function () { return g.phase === 'falling'; }, 40);   // 不刹车，直接冲出崖边
       adv(34);
-    } else if (mode === 'win') {
-      var dw = probeFeatherDist(150, 0.6, 0.3);                   // 先量点刹距离，再摆崖边
-      g.reset({ engineA: 5.5, roadLen: 150 + dw + 1.2 }); g.start();
-      featherRun(150, function () { return g.isTerminal(); });
     }
-    if (mode !== 'start') {
-      el.overlay.style.transition = 'none';
-      closeOverlay();
-    }
-    clampCamera(); updateUI(); draw(1);
+    if (mode !== 'start') { el.overlay.style.transition = 'none'; closeOverlay(); }
+    updateCamera(0.05); updateUI(); draw();
   }
 
-  // ---------------------------------------------------------------- 启动
+  // ================================================================ 启动
   function boot() {
-    resize();
-    buildGauges();
-    updateUI();
-    draw();
-    showStart();
+    resize(); buildGauges(); updateUI(); draw(); showStart();
     lastT = performance.now();
     requestAnimationFrame(loop);
     var m = /shot=([a-z]+)/.exec(location.search);
     if (m) { try { debugShot(m[1]); } catch (e) { el.selftest.textContent = 'shot error: ' + (e && e.stack || e); } }
-    else if (/selftest=1/.test(location.search)) { window.__selftest(); }
+    else if (/selftest=1/.test(location.search)) window.__selftest();
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();

@@ -1,4 +1,4 @@
-/* 悬崖急刹 —— HUD 样式（2D 版 index.html / 3D 版 index-3d.html 共用） */
+/* 悬崖急刹 —— HUD 样式（站点入口 index.html 与归档页 archive/2d.html 共用） */
   *{box-sizing:border-box}
   html,body{margin:0;height:100%;overflow:hidden;background:#04070d;color:#e9eff8;
     font-family:"Segoe UI Variable Display","Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;

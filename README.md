@@ -7,18 +7,15 @@
 把车在崖边刹停就赢，停得越贴边分越高；刹不住掉下去就输。
 不要重刹，刹车太重会断，车毁人亡！！！
 
-**在线试玩**（免下载）：<https://monostar-14.github.io/cliff-brake/>　｜　
-3D 版：<https://monostar-14.github.io/cliff-brake/index-3d.html>
+**在线试玩**（免下载）：<https://monostar-14.github.io/cliff-brake/>
 
 **本地玩**：下载本仓库，双击 `index.html`，或双击 `悬崖急刹-单文件版.html`（单文件版可以直接发给别人）。
 按住 <kbd>空格</kbd> 或按住底部红色按钮 = 踩刹车。
 
-| 2D 横版 | 3D（车右后方追尾视角） |
+| 加速中 | 逼近崖边 |
 |---|---|
-| ![2D 加速中](screenshots/2d-accel.png) | ![3D 逼近崖边](screenshots/3d-near-cliff.png) |
-| ![2D 贴边刹停](screenshots/2d-perfect-stop.png) | ![3D 失控飞出](screenshots/3d-airborne.png) |
-
-两个版本玩法、数值、失败判定完全一致，共用同一份物理内核 `game.js`；页面右上角互相切换。
+| ![加速中](screenshots/accel.png) | ![逼近崖边](screenshots/near-cliff.png) |
+| ![贴边刹停](screenshots/perfect-stop.png) | ![失控飞出](screenshots/airborne.png) |
 
 ---
 
