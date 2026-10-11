@@ -1,5 +1,8 @@
 # 悬崖急刹 (Cliff Brake)
 
+[![CI](https://github.com/Monostar-14/cliff-brake/actions/workflows/ci.yml/badge.svg)](https://github.com/Monostar-14/cliff-brake/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 一个单页网页小游戏：车在有限长度的路上自动加速到 100 km/h，路尽头是悬崖。
 把车在崖边刹停就赢，停得越贴边分越高；刹不住掉下去就输。
 
