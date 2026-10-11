@@ -10,15 +10,42 @@
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import html as _html
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-EDGE = os.environ.get(
-    "EDGE", r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")
 TMP = os.path.join(HERE, "edge-tmp")
 URL = "file:///" + HERE.replace("\\", "/") + "/"
+
+
+def find_edge():
+    """找无头浏览器：优先 $EDGE，其次常见安装路径，最后 PATH 里的任意 Chromium。
+    这样本地、GitHub Actions(Windows runner 自带 Edge)、甚至装了 Chrome 的机器都能跑。"""
+    env = os.environ.get("EDGE")
+    if env:
+        return env
+    cands = [
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\Application\msedge.exe"),
+        "/usr/bin/microsoft-edge", "/usr/bin/microsoft-edge-stable",
+        "/usr/bin/google-chrome", "/usr/bin/chromium",
+    ]
+    for c in cands:
+        if os.path.isfile(c):
+            return c
+    for name in ("msedge", "microsoft-edge", "microsoft-edge-stable", "google-chrome", "chromium"):
+        w = shutil.which(name)
+        if w:
+            return w
+    print("!! 找不到 Edge/Chrome。请设环境变量 EDGE=<浏览器路径>，例如")
+    print('   EDGE="/c/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"')
+    sys.exit(2)
+
+
+EDGE = find_edge()
 
 
 def edge(args, timeout=120):
@@ -35,6 +62,12 @@ def dump(url):
 
 def main():
     rc = 0
+    print("浏览器:", EDGE)
+    try:
+        print("URL   :", URL)
+    except Exception:
+        pass
+    print()
     print("=" * 66)
     print("1) 物理内核验证  verify.html")
     print("=" * 66)

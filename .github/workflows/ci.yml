@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: 物理断言 + 两版页面自检
+    # 测试靠无头浏览器执行页面里的自检。windows runner 自带 Edge，
+    # 因此这里不装任何依赖：游戏本身零依赖，不用 npm、不用 build。
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 跑测试（17 项物理断言 + 2D/3D 页面自检）
+        run: python run-tests.py
