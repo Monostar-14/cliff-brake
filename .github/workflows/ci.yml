@@ -17,10 +17,13 @@ jobs:
     # 因此这里不装任何依赖：游戏本身零依赖，不用 npm、不用 build。
     runs-on: windows-latest
     timeout-minutes: 10
+    env:
+      # windows runner 上 Python 默认用 cp1252 输出，脚本里有中文，保险起见也设上
+      PYTHONIOENCODING: utf-8
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 

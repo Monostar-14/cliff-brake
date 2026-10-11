@@ -15,6 +15,14 @@ import subprocess
 import sys
 import html as _html
 
+# Windows 上 Python 的控制台编码默认是 cp1252/gbk，直接 print 中文会
+# UnicodeEncodeError(GitHub Actions 的 windows runner 必踩)。统一强制 UTF-8。
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 TMP = os.path.join(HERE, "edge-tmp")
 URL = "file:///" + HERE.replace("\\", "/") + "/"
