@@ -1,0 +1,15 @@
+# 无头浏览器跑测试留下的临时配置目录：体积大(13MB)，且内含本机浏览器账号信息
+edge-tmp/
+
+# 调试截图：仓库里只保留 screenshots/ 下挑出来的展示图，其余就地生成即可
+shot-*.png
+shot3d-*.png
+
+# Python
+__pycache__/
+*.pyc
+
+# 系统
+Thumbs.db
+.DS_Store
+desktop.ini

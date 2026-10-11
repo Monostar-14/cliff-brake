@@ -1,0 +1,148 @@
+/* 悬崖急刹 —— HUD 样式（2D 版 index.html / 3D 版 index-3d.html 共用） */
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden;background:#04070d;color:#e9eff8;
+    font-family:"Segoe UI Variable Display","Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent}
+  button{font-family:inherit}
+  .app{height:100%;display:grid;grid-template-rows:auto minmax(0,1fr) auto;
+    background:radial-gradient(1100px 560px at 50% -8%,#182742 0%,#080e1b 58%,#03060c 100%)}
+
+  /* ---------- 顶栏 ---------- */
+  .topbar{display:flex;align-items:center;gap:16px;padding:10px 18px;border-bottom:1px solid rgba(255,255,255,.06);
+    backdrop-filter:blur(10px);background:rgba(8,14,26,.55)}
+  .brand{display:flex;align-items:baseline;gap:10px;white-space:nowrap}
+  .brand b{font-size:17px;letter-spacing:.5px}
+  .brand .dot{width:9px;height:9px;border-radius:50%;background:#ffb457;box-shadow:0 0 12px #ffb45790;align-self:center}
+  .brand .sub{font-size:12px;color:#8b9ab3}
+  .track{position:relative;flex:1;height:26px;border-radius:13px;background:rgba(255,255,255,.05);
+    border:1px solid rgba(255,255,255,.07);overflow:hidden;min-width:180px}
+  .track-danger{position:absolute;right:0;top:0;bottom:0;background:linear-gradient(90deg,rgba(255,72,72,0),rgba(255,72,72,.42));
+    border-left:1px dashed rgba(255,120,120,.6)}
+  .track-fill{position:absolute;left:0;top:0;bottom:0;width:0;background:linear-gradient(90deg,#3fa9ff55,#4cc9f055)}
+  .track-car{position:absolute;top:50%;left:0;transform:translate(-50%,-50%);font-size:15px;filter:drop-shadow(0 0 4px #000)}
+  .track-cliff{position:absolute;right:2px;top:50%;transform:translateY(-50%);font-size:14px;opacity:.9}
+  .hud{display:flex;gap:16px;white-space:nowrap}
+  .hud-item{display:flex;flex-direction:column;align-items:flex-end;line-height:1.15}
+  .hud-item span{font-size:10px;color:#8092ab;letter-spacing:1px}
+  .hud-item b{font-size:16px;font-variant-numeric:tabular-nums}
+  .icon-btn{width:32px;height:32px;border-radius:10px;border:1px solid rgba(255,255,255,.1);
+    background:rgba(255,255,255,.05);color:#cfe0f5;cursor:pointer;font-size:15px;line-height:1}
+  .icon-btn:hover{background:rgba(255,255,255,.1)}
+
+  /* ---------- 舞台 ---------- */
+  .stage{position:relative;min-height:0;overflow:hidden}
+  #world{display:block;width:100%;height:100%}
+  .glass{background:rgba(13,20,34,.62);border:1px solid rgba(255,255,255,.09);
+    border-radius:16px;backdrop-filter:blur(14px);box-shadow:0 10px 36px rgba(0,0,0,.45)}
+
+  .pill{position:absolute;left:50%;top:14px;transform:translateX(-50%);padding:7px 16px;border-radius:999px;
+    font-size:13.5px;font-weight:600;letter-spacing:.3px;white-space:nowrap;
+    background:rgba(13,20,34,.7);border:1px solid rgba(255,255,255,.1);backdrop-filter:blur(12px);
+    transition:color .2s,border-color .2s,background .2s}
+  .pill.calm{color:#9fb3ca}
+  .pill.go{color:#5ee0a0;border-color:#5ee0a055;background:rgba(20,60,45,.6)}
+  .pill.brake{color:#ffcf6b;border-color:#ffcf6b55;background:rgba(70,50,15,.6)}
+  .pill.bad{color:#ff7a7a;border-color:#ff7a7a66;background:rgba(70,20,20,.65)}
+
+  /* 左侧踏板力度表 */
+  .pedal{position:absolute;left:14px;top:50%;transform:translateY(-50%);width:112px;padding:12px 10px 12px;
+    display:flex;flex-direction:column;align-items:center;gap:8px}
+  .pedal h4{margin:0;font-size:11px;font-weight:600;color:#93a6bf;letter-spacing:1.2px}
+  .pedal-cap{font-size:9.5px;color:#ff9a7a;letter-spacing:.4px;margin-top:-4px}
+  .pedal-body{position:relative;width:100%;display:flex;gap:8px;justify-content:center}
+  .gauge-track{position:relative;width:26px;height:190px;border-radius:13px;overflow:hidden;
+    background:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,.03));
+    border:1px solid rgba(255,255,255,.12)}
+  .gauge-fill{position:absolute;left:0;right:0;bottom:0;height:0%;
+    background:linear-gradient(0deg,#3ddc97,#ffd166 62%,#ff5d5d 92%);transition:height .06s linear}
+  .gauge-break{position:absolute;left:-4px;right:-4px;height:0;border-top:2px dashed #ff5d5d;bottom:100%;opacity:.85}
+  .gauge-zone{position:absolute;left:0;right:0;top:0;height:22%;background:repeating-linear-gradient(45deg,rgba(255,60,60,.28) 0 5px,transparent 5px 10px)}
+  .gauge-ticks{position:absolute;right:-32px;top:0;bottom:0;width:30px;font-size:9px;color:#7c8ea6}
+  .gauge-ticks i{position:absolute;right:0;font-style:normal;transform:translateY(50%)}
+  .gauge-ticks i::before{content:"";position:absolute;left:-8px;top:50%;width:6px;height:1px;background:rgba(255,255,255,.35)}
+  .pedal-num{font-size:19px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1}
+  .pedal-num small{font-size:10px;font-weight:500;color:#8fa2ba;margin-left:2px}
+  .pedal-sub{font-size:10.5px;color:#8fa2ba;text-align:center;line-height:1.45;font-variant-numeric:tabular-nums}
+  .pedal.broken{border-color:#ff5d5d77;box-shadow:0 0 0 1px #ff5d5d33,0 10px 36px rgba(120,0,0,.5)}
+  .pedal.broken .gauge-fill{background:#ff4d4d}
+  .pedal.danger{border-color:#ff9a5e88;box-shadow:0 0 0 1px #ff9a5e44,0 0 22px rgba(255,120,60,.25) inset}
+  .pedal.danger .pedal-num{color:#ffb457}
+  .crack{position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .25s;
+    background:
+      linear-gradient(72deg,transparent 48%,#ffd9d9 49%,transparent 50%) 12% 30%/60% 70% no-repeat,
+      linear-gradient(-58deg,transparent 48%,#ffb9b9 49%,transparent 50%) 70% 20%/70% 60% no-repeat}
+  .pedal.broken .crack{opacity:.75}
+
+  /* 中央浮层 */
+  .overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    background:radial-gradient(600px 400px at 50% 45%,rgba(4,8,16,.55),rgba(2,4,9,.85));
+    backdrop-filter:blur(3px);z-index:5;transition:opacity .25s}
+  .overlay.hide{opacity:0;pointer-events:none}
+  .ov{width:min(520px,88%);padding:26px 26px 22px;text-align:center}
+  .ov h1{margin:0 0 6px;font-size:27px;letter-spacing:.5px}
+  .ov h2{margin:0 0 4px;font-size:24px}
+  .ov .lead{margin:0 0 14px;font-size:13px;color:#93a6bf;line-height:1.7}
+  .ov ul{margin:0 0 16px;padding:0 0 0 2px;list-style:none;text-align:left;font-size:12.8px;color:#b7c6da;line-height:1.95}
+  .ov ul li::before{content:"›";color:#ffb457;margin-right:8px;font-weight:700}
+  .kbd{display:inline-block;padding:1px 6px;border-radius:5px;background:rgba(255,255,255,.1);
+    border:1px solid rgba(255,255,255,.16);font-size:11.5px}
+  .btn{cursor:pointer;border:none;border-radius:14px;padding:13px 22px;font-size:15.5px;font-weight:700;
+    letter-spacing:.6px;color:#08121f;background:linear-gradient(180deg,#ffd479,#ffab3d);
+    box-shadow:0 8px 24px rgba(255,150,40,.28);transition:transform .12s,box-shadow .12s}
+  .btn:hover{transform:translateY(-1px);box-shadow:0 12px 28px rgba(255,150,40,.4)}
+  .btn:active{transform:translateY(1px)}
+  .btn.ghost{background:rgba(255,255,255,.08);color:#dbe7f6;box-shadow:none;border:1px solid rgba(255,255,255,.14)}
+  .res-score{font-size:44px;font-weight:800;line-height:1;margin:6px 0 2px;font-variant-numeric:tabular-nums}
+  .res-meta{font-size:12.5px;color:#93a6bf;line-height:1.8;margin-bottom:14px}
+  .res-rank{display:inline-block;min-width:34px;padding:3px 10px;border-radius:9px;font-weight:800;font-size:15px;
+    background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14)}
+  .row{display:flex;gap:10px;justify-content:center}
+
+  /* ---------- 底部仪表台 ---------- */
+  .dash{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:18px;padding:6px 20px 14px;
+    border-top:1px solid rgba(255,255,255,.06);background:linear-gradient(180deg,rgba(6,10,18,.2),rgba(4,7,13,.9))}
+  .speedo{position:relative;width:206px;height:118px}
+  .speedo svg{position:absolute;inset:0;overflow:visible}
+  .sp-num{position:absolute;left:0;right:0;bottom:2px;text-align:center;line-height:1}
+  .sp-num b{font-size:34px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-1px}
+  .sp-num small{display:block;font-size:10.5px;color:#8092ab;letter-spacing:2px;margin-top:2px}
+  .ctrl{display:flex;flex-direction:column;align-items:center;gap:8px}
+  .brake{cursor:pointer;user-select:none;touch-action:none;border:none;border-radius:20px;
+    min-width:300px;padding:20px 34px;font-size:19px;font-weight:800;letter-spacing:2px;
+    color:#2a0d0d;background:linear-gradient(180deg,#ff9b8a,#f2543f);
+    box-shadow:0 10px 30px rgba(220,60,40,.32),inset 0 -3px 0 rgba(0,0,0,.18);
+    transition:transform .1s,box-shadow .1s,filter .2s;display:flex;flex-direction:column;gap:3px;align-items:center}
+  .brake small{font-size:10.5px;font-weight:600;letter-spacing:1.5px;opacity:.72}
+  .brake:active,.brake.on{transform:translateY(2px) scale(.995);
+    box-shadow:0 4px 14px rgba(220,60,40,.4),inset 0 3px 8px rgba(0,0,0,.25);filter:brightness(1.08)}
+  .brake[disabled]{cursor:not-allowed;filter:grayscale(.85) brightness(.62);box-shadow:none;transform:none}
+  .brake.locked{background:linear-gradient(180deg,#8c96a6,#5e6a7c);color:#eaf0f8}
+  .meters{min-width:250px;padding:11px 14px;border-radius:14px;font-size:12px;color:#a9bad0;line-height:1.7}
+  .meters b{color:#e9eff8;font-variant-numeric:tabular-nums}
+  .meters .warn{color:#ff8b6b;font-weight:700}
+  .meters .ok{color:#5ee0a0;font-weight:700}
+  .flash{animation:pulse .5s ease 2}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .sr{position:absolute;left:-9999px}
+
+  /* ---------- 窄屏兜底 ---------- */
+  @media (max-width: 920px){
+    .topbar{gap:10px;padding:8px 10px}
+    .brand .sub{display:none}
+    .hud{display:none}
+    .dash{grid-template-columns:auto 1fr;gap:10px;padding:4px 12px 10px}
+    #meters{display:none}
+    .speedo{width:148px;height:86px}
+    .sp-num b{font-size:26px}
+    .brake{min-width:0;width:100%;padding:16px 12px;font-size:16px;letter-spacing:1px}
+    .pedal{left:8px;width:78px;padding:8px 6px;gap:5px}
+    .pedal h4{font-size:9.5px;letter-spacing:.5px}
+    .pedal-cap{font-size:8px}
+    .gauge-track{width:20px;height:132px}
+    .gauge-ticks{right:-26px;width:24px;font-size:8px}
+    .pedal-num{font-size:15px}
+    .pedal-sub{font-size:9px}
+    .ov{padding:18px 16px 16px}
+    .ov h1{font-size:22px}
+    .ov ul{font-size:11.6px;line-height:1.8}
+  }
