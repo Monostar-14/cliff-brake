@@ -8,6 +8,7 @@
 不要重刹，刹车太重会断，车毁人亡！！！
 
 **在线试玩**（免下载）：<https://monostar-14.github.io/cliff-brake/>
+<https://cargame.mcrealm.hk/>
 
 **本地玩**：下载本仓库，双击 `index.html`，或双击 `悬崖急刹-单文件版.html`（单文件版可以直接发给别人）。
 按住 <kbd>空格</kbd> 或按住底部红色按钮 = 踩刹车。
